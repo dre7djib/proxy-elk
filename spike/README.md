@@ -1,4 +1,4 @@
-# Spike SP-01 à SP-04 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe
+# Spike SP-01 à SP-05 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL
 
 Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). Pas de tests, pas de belle architecture : le but est de lever un risque précis.
 
@@ -9,6 +9,8 @@ Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%
 **Périmètre de SP-03** : le proxy valide désormais le login LDAP (search-then-bind, F4) puis parle à Elasticsearch avec un compte de service en usurpant l'identité de l'utilisateur (`es-security-runas-user`, **piste A**). Alice se connecte à Kibana avec son mot de passe LDAP et apparaît avec sa propre identité et son rôle. **Piste A validée par exécution réelle**, avec un correctif non prévu au départ : voir [Constat d'exécution — `_security/profile/_activate`](#constat-dexécution--securityprofile_activate-sp-03) plus bas.
 
 **Périmètre de SP-04** : les rôles ES built-in `viewer`/`editor` de SP-03 (accès à tous les spaces) sont remplacés par un rôle par couple équipe/niveau (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`) et un space Kibana par équipe (`equipe-a`, `equipe-b`). Nouveau service `kibana-setup` ([`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh)), lancé après que Kibana soit joignable, qui crée les spaces et complète les rôles via l'API rôles de Kibana (privilèges `elasticsearch` + `kibana`, pas l'API rôles d'Elasticsearch directement). **Critère de réussite atteint par exécution réelle** : alice lit seulement le space et les données de l'équipe A, bob modifie un dashboard de l'équipe A, carol ne voit rien de l'équipe A — vérifié via [`scripts/verify.sh`](scripts/verify.sh). Détail dans [Rôles ES et spaces Kibana par équipe](#rôles-es-et-spaces-kibana-par-équipe-sp-04) plus bas.
+
+**Périmètre de SP-05** : `FROM`, `LOOKUP JOIN` et `ENRICH` testés via le proxy sur 8.19.23, en `elastic` puis en `alice` (chemin LDAP → `run_as`). Les trois fonctionnent. Constat majeur : l'ACL native d'Elasticsearch protège l'index **cible** d'un `LOOKUP JOIN` tout comme un `FROM`, mais **pas** celui d'une policy `ENRICH` (seulement un privilège cluster global `monitor_enrich`/`manage_enrich`) — fuite inter-équipe démontrée. Détail dans [SP-05 FROM LOOKUP JOIN et ENRICH via le proxy](#sp-05-from-lookup-join-et-enrich-via-le-proxy) plus bas.
 
 ## Démarrer
 
@@ -139,6 +141,76 @@ Si un cas de cette matrice échoue, ne pas commencer par regarder le proxy : d'a
 
 Pas de configuration YAML source unique, pas de synchronisation générique/idempotente au sens de F74-F77 (l'idempotence testée ici est manuelle, pas garantie par construction), pas de niveau `admin`, pas de mapping automatique des groupes LDAP vers équipe/niveau (F72), pas de détection de divergence (F76), pas de mode simulation (F77). L'affectation alice/bob/carol → rôle reste statique dans `es-bootstrap.sh`, comme en SP-03. Ça arrive en J2-01 (config YAML) et J2-02 (synchro idempotente).
 
+## SP-05 FROM LOOKUP JOIN et ENRICH via le proxy
+
+Objectif du ticket : savoir quelles commandes ES|QL référencent d'autres index en 8.19, et la version minimale d'Elasticsearch à retenir pour F27 (vérification des index lus par une requête avant exécution, garde-fou de l'assistant IA).
+
+### Pourquoi les index de test suivent le pattern `equipe-a-*`/`equipe-b-*`
+
+Le plan initial du ticket supposait encore le rôle built-in `viewer` d'alice (accès large à tous les index). Entre-temps, SP-04 l'a remplacé par un rôle restreint au pattern `equipe-a-*` (voir plus haut). Avec des index nommés `sp05-*` comme prévu au plan, alice n'aurait pu en lire aucun : le test via son identité LDAP n'aurait rien démontré sur ES|QL lui-même.
+
+[`scripts/esql-seed.sh`](scripts/esql-seed.sh) crée donc deux jeux d'index, un par équipe :
+
+| Usage | Équipe A (lisible par alice) | Équipe B (pas lisible par alice) |
+| --- | --- | --- |
+| `FROM` | `equipe-a-sp05-logs` | `equipe-b-sp05-logs` (témoin négatif) |
+| `LOOKUP JOIN` (`index.mode: lookup`) | `equipe-a-sp05-hosts` | `equipe-b-sp05-hosts` |
+| `ENRICH` (index source + policy) | `equipe-a-sp05-owners` / `sp05-owners-a-policy` | `equipe-b-sp05-owners` / `sp05-owners-b-policy` |
+
+Ce choix permet de répondre à la vraie question de F27 : est-ce qu'Elasticsearch isole nativement l'index **cible** d'un `LOOKUP JOIN` ou la policy d'un `ENRICH`, au même titre que le `FROM` ? Sans ce test croisé, on n'aurait vérifié que la capacité brute des commandes (avec `elastic`), pas leur comportement de sécurité réel.
+
+### Constat d'exécution — LOOKUP JOIN exige un champ `keyword`
+
+Première tentative refusée en 400 pour **tout le monde**, y compris `elastic` (donc sans rapport avec l'ACL) : `verification_exception`, *"JOIN with right field [host] of type [TEXT] is not supported"*. Le champ de jointure `host`, laissé en mapping dynamique, était du `text`. Corrigé en mappant explicitement `host` (et `owner`) en `keyword` dans `esql-seed.sh`.
+
+### Exécuter
+
+```sh
+./scripts/esql-seed.sh     # crée les index et policies ci-dessus (relançable)
+./scripts/verify-esql.sh   # joue FROM/LOOKUP JOIN/ENRICH en elastic puis en alice
+```
+
+`verify-esql.sh` n'est volontairement pas un gate pass/fail comme `verify.sh` : certains résultats attendus sont des refus (403), et deux cas sont marqués « constat ouvert » dans la sortie — c'est la vraie question du spike, pas une régression si le résultat n'est pas celui espéré.
+
+### Résultats
+
+| Commande | Référence un index dans le texte ? | ACL native ES sur la cible | Version minimale 8.x utile |
+| --- | --- | --- | --- |
+| `FROM` | oui (patterns, listes, nom quoté) | oui : liste explicite avec un index non autorisé → `403` ; wildcard élargi (`equipe-*-sp05-logs`) → filtré silencieusement aux index autorisés d'alice, sans erreur et sans fuite constatée | GA depuis 8.14 |
+| `LOOKUP JOIN idx ON champ` | oui, nom d'index exact obligatoire | **oui** : alice refusée (400, « Unknown index ») sur `LOOKUP JOIN equipe-b-sp05-hosts ON host`, alors qu'elastic réussit la même requête | GA en 8.19 (preview en 8.18) |
+| `ENRICH policy` | **non**, seulement un nom de policy | **non**, voir constat majeur ci-dessous | GA depuis les débuts d'ES\|QL, mais insuffisant seul pour F27 |
+
+### Constat d'exécution majeur — ENRICH n'est pas protégé par index source
+
+`ENRICH` nécessite uniquement le privilège **cluster** `monitor_enrich`/`manage_enrich` — confirmé par le message d'erreur d'Elasticsearch quand alice (rôle `equipe_a_viewer`, sans ce privilège) tente `ENRICH sp05-owners-a-policy` :
+
+```
+action [cluster:monitor/xpack/enrich/esql/resolve_policy] is unauthorized for user [proxy_service]
+run as [alice] with effective roles [equipe_a_viewer], this action is granted by the cluster
+privileges [cross_cluster_search,monitor_enrich,manage_enrich,monitor,manage,all]
+```
+
+Sans ce privilège, `ENRICH` est refusé en bloc, **même pour la policy de sa propre équipe** (403 sur `sp05-owners-a-policy` aussi). Mais le privilège est **cluster-wide**, pas par policy ni par index source : pour tester ce qu'il se passe une fois accordé, un rôle temporaire a été créé et attaché à alice le temps du test, puis retiré :
+
+```sh
+curl -u "elastic:${ELASTIC_PASSWORD}" -X PUT http://127.0.0.1:9200/_security/role/sp05_monitor_enrich_test \
+  -H 'Content-Type: application/json' \
+  -d '{"cluster":["monitor_enrich"],"indices":[{"names":["equipe-a-*"],"privileges":["read","view_index_metadata"]}]}'
+curl -u "elastic:${ELASTIC_PASSWORD}" -X PUT http://127.0.0.1:9200/_security/user/alice \
+  -H 'Content-Type: application/json' \
+  -d '{"roles":["equipe_a_viewer","sp05_monitor_enrich_test"],"full_name":"Alice Martin"}'
+```
+
+Résultat : `FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host`, exécuté par alice via le proxy, a renvoyé `"owner": "equipe-b-secret"` — la valeur de l'index source de l'équipe **B**, alors qu'alice n'a aucun privilège de lecture sur `equipe-b-sp05-owners` ni `equipe-b-*`. **Fuite inter-équipe confirmée.** Rôle et affectation retirés immédiatement après le test.
+
+**Conséquence directe pour F27** : `FROM` et `LOOKUP JOIN` sont déjà protégés par l'ACL native d'Elasticsearch (le nom de l'index cible est toujours explicite dans le texte de la requête) ; un parseur qui extrait ces noms (pour l'audit F49 et le refus fail-closed) suffit, sans contrôle d'autorisation supplémentaire côté proxy. `ENRICH` demande un traitement spécifique : le proxy doit résoudre `GET /_enrich/policy/<nom>` pour retrouver l'index source avant d'autoriser l'exécution, et refuser si la policy est inconnue ou si l'index source sort du périmètre de l'utilisateur (fail-closed, F38) — sans quoi accorder `monitor_enrich` à une équipe pour qu'elle utilise `ENRICH` l'expose de fait aux policies de toutes les autres équipes.
+
+**Version minimale d'Elasticsearch retenue** : **8.19** si `LOOKUP JOIN` doit être couvert par F27 en production (GA à cette version, alignée avec le choix déjà fait pour Kibana 8.19). 8.14 suffirait pour `FROM` + `ENRICH` seuls. Pas de `FORK` en 8.19 : seules ces trois commandes lisent d'autres données.
+
+### Hors périmètre de SP-05
+
+Parser F27 (extraction des index, résolution des policies ENRICH, fail-closed), toute modification du proxy (`/_query` traverse déjà le passe-plat existant sans changement, visible dans `docker compose logs proxy | grep '"path":"/_query"'`), et le cluster distant (CCS) — la syntaxe `cluster:index` de `FROM` est documentée mais pas testée avec un vrai cluster remote. Détail du ticket dans [SP-05](../docs/Tickets%20Proxy%20Elasticsearch/SP-05%20ES-QL%20-%20FROM%2C%20LOOKUP%20JOIN%2C%20ENRICH%20via%20proxy.md).
+
 ## Limites connues (acceptées pour un spike de 0,5 j)
 
 - **Image OpenLDAP** : `osixia/openldap:1.5.0`, pas `bitnami/openldap`. Bitnami a retiré ses images gratuites de Docker Hub en 2025 (`docker.io/bitnami/openldap:2.6` introuvable au moment du spike, voir [bitnami/containers#83267](https://github.com/bitnami/containers/issues/83267)) ; `osixia/openldap` reste tirable et très utilisé, mais en maintenance réduite. À réévaluer avant J1 (construire sa propre image `slapd` au besoin).
@@ -149,6 +221,8 @@ Pas de configuration YAML source unique, pas de synchronisation générique/idem
 - **Pas de limitation des tentatives de connexion** (brute force, F8), ni de timeouts/pool de connexions LDAP dédiés (F10) : un seul bind à la fois, délai par défaut du client `go-ldap`.
 - **`go.sum` non committé** ([`proxy/Dockerfile`](proxy/Dockerfile)) : `go mod tidy` résout `github.com/go-ldap/ldap/v3` à la construction de l'image, ce qui demande un accès réseau à `docker compose build` et n'est pas reproductible à l'octet près. Acceptable pour un spike, à corriger avant J1 (committer `go.sum`, vendoring ou miroir de modules).
 - **Index de données minimal** : `equipe-a-sample`/`equipe-b-sample` n'ont qu'un document de test chacun (SP-04), juste pour vérifier l'isolation par équipe ; pas un vrai jeu de données.
+- **ENRICH non protégé par index source (SP-05)** : confirmé par exécution réelle, voir [SP-05](#sp-05-from-lookup-join-et-enrich-via-le-proxy). F27 doit résoudre la policy vers son index source avant d'autoriser l'exécution ; ni le proxy actuel ni Elasticsearch ne le font nativement.
+- **Index de test SP-05 non nettoyés par `docker compose down -v`** : `equipe-*-sp05-*` et les policies `sp05-owners-*-policy` sont créés par [`scripts/esql-seed.sh`](scripts/esql-seed.sh) directement sur Elasticsearch ; ils disparaissent avec le volume `esdata` comme le reste, mais ne sont pas recréés automatiquement par `docker compose up` (relancer `esql-seed.sh` à la main si besoin).
 
 ## Arrêter / nettoyer
 
