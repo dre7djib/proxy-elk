@@ -1,36 +1,34 @@
 name: spike-proxy-elk
 
-# Stack jetable du spike SP-01 : Elasticsearch + Kibana 8.19 avec sécurité
-# activée (login natif "elastic"), et un OpenLDAP peuplé d'utilisateurs de
-# test. OpenLDAP n'est pas encore branché à Kibana (voir SP-02/SP-03).
-# Pas de TLS entre les services : simplifie le proxy transparent de SP-02,
-# accepté pour un spike de 0,5 j (voir spike/README.md).
+# Stack jetable du spike SP-01 à SP-03 : Elasticsearch + Kibana 8.19 avec
+# sécurité activée, un OpenLDAP peuplé d'utilisateurs de test, et un proxy Go
+# qui journalise tous les appels (SP-02) et valide le login LDAP via
+# search-then-bind puis run_as (SP-03, piste A). Login natif "elastic"
+# toujours possible en repli (SP-01).
+# Pas de TLS entre les services, LDAP en clair : simplifie le spike, accepté
+# pour un spike jetable (voir spike/README.md, F5/F68 pour la suite).
 
 services:
-  # Positionne le mot de passe du compte de service kibana_system une fois
-  # qu'Elasticsearch répond, puis s'arrête (pattern officiel Elastic).
+  # Prépare Elasticsearch une fois qu'il répond, puis s'arrête (pattern
+  # officiel Elastic) : mot de passe de kibana_system (SP-01), et depuis
+  # SP-03 le rôle + l'utilisateur de service pour le run_as, ainsi que les
+  # utilisateurs natifs alice/bob/carol (requis pour que run_as fonctionne,
+  # voir spike/scripts/es-bootstrap.sh).
   setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     environment:
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+      - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
+    volumes:
+      - ./scripts/es-bootstrap.sh:/usr/local/bin/es-bootstrap.sh:ro
     networks:
       - spike
     depends_on:
       elasticsearch:
         condition: service_healthy
-    command: >
-      bash -c '
-        echo "Definition du mot de passe de kibana_system...";
-        until curl -s -X POST \
-          -u "elastic:${ELASTIC_PASSWORD}" \
-          -H "Content-Type: application/json" \
-          http://elasticsearch:9200/_security/user/kibana_system/_password \
-          -d "{\"password\":\"${KIBANA_PASSWORD}\"}" \
-          | grep -q "^{}";
-        do sleep 2; done;
-        echo "kibana_system pret.";
-      '
+    command: ["bash", "/usr/local/bin/es-bootstrap.sh"]
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
@@ -68,17 +66,37 @@ services:
       timeout: 10s
       retries: 30
 
-  # Proxy transparent du spike SP-02 : passe-plat entre Kibana et
-  # Elasticsearch qui journalise chaque appel en JSON sur stdout (voir
-  # spike/proxy/main.go). Aucune authentification ni autorisation ici,
-  # juste de l'observation (F66, F67 ; SP-03 et J1 pour le reste).
+  # Proxy du spike SP-02/SP-03, entre Kibana et Elasticsearch : journalise
+  # chaque appel en JSON sur stdout (SP-02) et, depuis SP-03, valide les
+  # logins LDAP (search-then-bind) puis parle à Elasticsearch avec le compte
+  # de service proxy_service en usurpant l'identité (run_as, piste A). Voir
+  # spike/proxy/main.go. ACL/J1 toujours hors périmètre (F66, F67).
   proxy:
     build: ./proxy
     environment:
       - UPSTREAM_URL=http://elasticsearch:9200
       - LISTEN_ADDR=:9200
+      # SP-03 : search-then-bind (F4) contre OpenLDAP, puis run_as avec le
+      # compte de service. Le DN et le mot de passe de lecture sont ceux
+      # créés par LDAP_READONLY_USER sur le service openldap ci-dessous.
+      - LDAP_URL=ldap://openldap:389
+      - LDAP_READONLY_DN=cn=readonly,dc=example,dc=org
+      - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - LDAP_BASE_DN=ou=people,dc=example,dc=org
+      # Cache court de l'authentification LDAP : SP-02 a mesuré ~145
+      # _authenticate et ~148 _has_privileges par cycle connexion + Discover,
+      # un bind LDAP à chacun rendrait l'UI perceptiblement plus lente.
+      - LDAP_CACHE_TTL=2m
+      - PROXY_SERVICE_USER=proxy_service
+      - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      # Constat d'exécution SP-03 : requis pour POST
+      # /_security/profile/_activate (voir proxy/main.go,
+      # profileActivateMiddleware, et scripts/es-bootstrap.sh).
+      - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
     depends_on:
       elasticsearch:
+        condition: service_healthy
+      openldap:
         condition: service_healthy
     ports:
       - "127.0.0.1:9210:9200"
@@ -134,7 +152,9 @@ services:
       retries: 30
 
   # OpenLDAP peuplé d'utilisateurs de test (alice, bob, carol) via le LDIF de
-  # ldap/01-bootstrap.ldif. Pas encore branché à Kibana (SP-03).
+  # ldap/01-bootstrap.ldif. Branché à Kibana depuis SP-03, via le search-then-
+  # bind du proxy (spike/proxy/main.go) : OpenLDAP ne parle jamais directement
+  # à Kibana ni à Elasticsearch.
   #
   # Image : osixia/openldap, pas bitnami/openldap. bitnami a retiré ses images
   # gratuites de Docker Hub en 2025 (docker.io/bitnami/openldap:2.6 introuvable
