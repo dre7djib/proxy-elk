@@ -1,4 +1,4 @@
-# Spike SP-01/SP-02/SP-03 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as)
+# Spike SP-01 à SP-04 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe
 
 Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). Pas de tests, pas de belle architecture : le but est de lever un risque précis.
 
@@ -6,7 +6,9 @@ Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%
 
 **Périmètre de SP-02** : un proxy Go minimal ([`proxy/`](proxy/)) s'intercale maintenant entre Kibana et Elasticsearch. C'est un **passe-plat transparent** (aucune authentification ni autorisation ajoutée) qui journalise chaque appel en JSON sur stdout, pour observer ce que Kibana envoie réellement à Elasticsearch.
 
-**Périmètre de SP-03** : le proxy valide désormais le login LDAP (search-then-bind, F4) puis parle à Elasticsearch avec un compte de service en usurpant l'identité de l'utilisateur (`es-security-runas-user`, **piste A**). Alice se connecte à Kibana avec son mot de passe LDAP et apparaît avec sa propre identité et son rôle `viewer`. **Piste A validée par exécution réelle**, avec un correctif non prévu au départ : voir [Constat d'exécution — `_security/profile/_activate`](#constat-dexécution--securityprofile_activate-sp-03) plus bas.
+**Périmètre de SP-03** : le proxy valide désormais le login LDAP (search-then-bind, F4) puis parle à Elasticsearch avec un compte de service en usurpant l'identité de l'utilisateur (`es-security-runas-user`, **piste A**). Alice se connecte à Kibana avec son mot de passe LDAP et apparaît avec sa propre identité et son rôle. **Piste A validée par exécution réelle**, avec un correctif non prévu au départ : voir [Constat d'exécution — `_security/profile/_activate`](#constat-dexécution--securityprofile_activate-sp-03) plus bas.
+
+**Périmètre de SP-04** : les rôles ES built-in `viewer`/`editor` de SP-03 (accès à tous les spaces) sont remplacés par un rôle par couple équipe/niveau (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`) et un space Kibana par équipe (`equipe-a`, `equipe-b`). Nouveau service `kibana-setup` ([`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh)), lancé après que Kibana soit joignable, qui crée les spaces et complète les rôles via l'API rôles de Kibana (privilèges `elasticsearch` + `kibana`, pas l'API rôles d'Elasticsearch directement). **Critère de réussite atteint par exécution réelle** : alice lit seulement le space et les données de l'équipe A, bob modifie un dashboard de l'équipe A, carol ne voit rien de l'équipe A — vérifié via [`scripts/verify.sh`](scripts/verify.sh). Détail dans [Rôles ES et spaces Kibana par équipe](#rôles-es-et-spaces-kibana-par-équipe-sp-04) plus bas.
 
 ## Démarrer
 
@@ -23,10 +25,11 @@ docker compose up -d
 - que le proxy est un passe-plat transparent (réponse identique en direct et via le proxy) et qu'une recherche authentifiée passe à travers lui (SP-02) ;
 - que Kibana accepte ce même login via son API interne (`/internal/security/login`), preuve du critère de réussite « Kibana accepte un login natif » — maintenant à travers le proxy, puisque `ELASTICSEARCH_HOSTS` de Kibana pointe dessus ;
 - qu'OpenLDAP contient alice, bob, carol et leurs groupes d'équipe, et qu'un bind LDAP avec un mauvais mot de passe est refusé ;
-- **(SP-03)** qu'Elasticsearch authentifie alice comme elle-même (`run_as`) avec son rôle `viewer`, et refuse un mauvais mot de passe LDAP sans jamais l'exposer à Elasticsearch ;
-- **(SP-03)** qu'alice se connecte à **Kibana** avec son mot de passe LDAP, apparaît sous sa propre identité avec le rôle `viewer` (critère de réussite du ticket), qu'un mauvais mot de passe est refusé, et que le login natif `elastic` n'a pas régressé.
+- **(SP-03)** qu'Elasticsearch authentifie alice comme elle-même (`run_as`) avec son rôle, et refuse un mauvais mot de passe LDAP sans jamais l'exposer à Elasticsearch ;
+- **(SP-03)** qu'alice se connecte à **Kibana** avec son mot de passe LDAP et apparaît sous sa propre identité, qu'un mauvais mot de passe est refusé, et que le login natif `elastic` n'a pas régressé ;
+- **(SP-04)** que le service `kibana-setup` s'est terminé avec succès, qu'alice ne voit que le space `equipe-a` et ses données, que bob peut modifier un dashboard de l'équipe A, et que carol ne voit ni le space ni les données de l'équipe A (critère de réussite du ticket).
 
-Ouvrir ensuite http://127.0.0.1:5601 dans un navigateur et se connecter avec `alice` / `alicepass` (ou `elastic` / le mot de passe de `.env`), puis ouvrir Discover, pour une confirmation visuelle (menu utilisateur = Alice Martin ; aucune donnée chargée : attendu, aucun index de données n'a été créé par le spike).
+Ouvrir ensuite http://127.0.0.1:5601 dans un navigateur et se connecter avec `alice` / `alicepass`, `bob` / `bobpass` ou `carol` / `carolpass` (ou `elastic` / le mot de passe de `.env`), pour une confirmation visuelle : le space switcher ne propose que `equipe-a` à alice/bob et `equipe-b` à carol, et le dashboard « Dashboard equipe A (SP-04) » n'est visible/modifiable que dans le space `equipe-a`.
 
 ## Accès
 
@@ -39,13 +42,13 @@ Ouvrir ensuite http://127.0.0.1:5601 dans un navigateur et se connecter avec `al
 
 Utilisateurs LDAP de test (`ldap/01-bootstrap.ldif`), mots de passe en clair dans le LDIF (spike, pas un vrai secret) :
 
-| uid | Mot de passe | Groupe | Rôle visé | Rôle natif ES (SP-03) |
+| uid | Mot de passe | Groupe LDAP | Rôle natif ES (SP-04) | Space Kibana |
 | --- | --- | --- | --- | --- |
-| alice | alicepass | `equipe-a-viewer` | viewer, équipe A | `viewer` |
-| bob | bobpass | `equipe-a-editor` | editor, équipe A | `editor` |
-| carol | carolpass | `equipe-b-viewer` | viewer, équipe B | `viewer` |
+| alice | alicepass | `equipe-a-viewer` | `equipe_a_viewer` (lecture) | `equipe-a` seulement |
+| bob | bobpass | `equipe-a-editor` | `equipe_a_editor` (lecture+écriture Kibana) | `equipe-a` seulement |
+| carol | carolpass | `equipe-b-viewer` | `equipe_b_viewer` (lecture) | `equipe-b` seulement |
 
-Le rôle natif ES n'isole pas encore par équipe (spaces, F70-F77) : ça arrive en SP-04. Côté Elasticsearch, alice/bob/carol ont un mot de passe natif qui n'est **jamais** celui ci-dessus (voir le constat SP-03 plus bas) : seul le mot de passe LDAP compte pour se connecter.
+Le groupe LDAP n'est pas encore mappé automatiquement vers le rôle ES (mapping groupes → équipe/niveau, F72) : l'affectation reste statique dans [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh), comme en SP-03 ; ça arrivera avec la config YAML de J2-01. Côté Elasticsearch, alice/bob/carol ont un mot de passe natif qui n'est **jamais** celui ci-dessus (voir le constat SP-03 plus bas) : seul le mot de passe LDAP compte pour se connecter.
 
 Compte de lecture pour le search-then-bind (F4, SP-03) : `cn=readonly,dc=example,dc=org` / `readonlypass` (créé par `LDAP_READONLY_USER=true`, pas `uid=readonly` comme un LDIF classique l'aurait créé).
 
@@ -91,16 +94,61 @@ Correctif implémenté dans [`proxy/main.go`](proxy/main.go) (`profileActivateMi
 
 Ce correctif ne change rien au principe de la piste A (LDAP reste la seule source de vérité pour le mot de passe que l'utilisateur tape) ; il comble un angle mort précis de l'intégration Kibana + run_as, qui n'était pas visible dans le relevé des appels de SP-02 (2 appels sur 1 486, facile à manquer sans tester un vrai login bout en bout).
 
+## Rôles ES et spaces Kibana par équipe (SP-04)
+
+Objectif du ticket : un rôle Elasticsearch et un space Kibana par équipe, pour qu'alice (équipe A, viewer) ne lise que les données et le space de son équipe, que bob (équipe A, editor) puisse modifier un dashboard de son équipe, et que carol (équipe B, viewer) ne voie rien de l'équipe A.
+
+### Pourquoi deux scripts de bootstrap
+
+Les privilèges Kibana (`base: read`/`all`, `spaces`) doivent être posés via l'**API rôles de Kibana** (`PUT /api/security/role/{name}`), pas directement via `PUT /_security/role` d'Elasticsearch : Kibana enregistre lui-même ses privilèges applicatifs (`kibana-.kibana`) à son démarrage, et les spaces n'existent tout simplement pas avant que Kibana ne soit démarré. Le service `setup` existant (SP-01/SP-03) se termine **avant** Kibana (il ne dépend que d'Elasticsearch) : impossible d'y créer les spaces ou les privilèges Kibana.
+
+Deux scripts, dans l'ordre :
+
+1. [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh) (service `setup`, inchangé dans son principe) : crée trois rôles ES **stub** (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`), sans aucun privilège, juste pour qu'alice/bob/carol puissent leur être assignés sans erreur côté Elasticsearch. Remplace les rôles built-in `viewer`/`editor` de SP-03, qui donnaient accès à tous les spaces.
+2. [`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh) (nouveau service `kibana-setup`, démarre seulement une fois Kibana `healthy`) : crée les spaces `equipe-a` et `equipe-b` (`POST`/`PUT /api/spaces/space`), puis réécrit entièrement les trois rôles stub via l'API rôles de Kibana (`elasticsearch.indices` + `kibana.base`/`spaces`), indexe un document de test dans `equipe-a-sample` et `equipe-b-sample` (directement sur Elasticsearch, pour vérifier l'isolation des *données* et pas seulement des objets Kibana), et crée un dashboard minimal dans le space `equipe-a` (`spike-dashboard-equipe-a`).
+
+Entre la fin de `setup` et la fin de `kibana-setup`, alice/bob/carol ont un rôle sans aucun privilège : ils peuvent se connecter mais ne voient aucun space. Fenêtre courte, jugée acceptable pour un spike.
+
+Définition des rôles complets (posée par `kibana-bootstrap.sh`) :
+
+| Rôle | Index ES (`read`) | Space Kibana | Base Kibana |
+| --- | --- | --- | --- |
+| `equipe_a_viewer` | `equipe-a-*` | `equipe-a` | `read` |
+| `equipe_a_editor` | `equipe-a-*` | `equipe-a` | `all` |
+| `equipe_b_viewer` | `equipe-b-*` | `equipe-b` | `read` |
+
+Editor et viewer de l'équipe A ont les **mêmes** privilèges d'index (lecture) : la différence porte sur les objets Kibana du space (dashboards, etc.), pas sur les données elles-mêmes — c'est le périmètre du critère de réussite (« bob peut modifier un dashboard de A »), pas un droit d'écriture sur les données.
+
+### Constat d'exécution — Dev Tools déjà fermé par `base: read` (SP-04)
+
+Avant d'implémenter, le risque identifié était qu'un rôle `base: ["read"]` laisse Dev Tools visible pour un viewer (les sous-privilèges par sous-fonctionnalité sont une fonction payante, donc pas de moyen fin de le masquer). **Testé réellement** (`POST /api/console/proxy` avec la session d'alice) : Kibana 8.19 refuse déjà cet appel en 403 (« this action is granted by the Kibana privileges [console] ») avec le seul `base: read`, sans configuration `feature` supplémentaire. Pas besoin de personnaliser les privilèges par fonctionnalité pour ce cas précis ; utile aussi pour SP-07 (licence Basic : la restriction Dev Tools ne vient pas d'un palier payant, elle est déjà dans le comportement de base).
+
+### Vérification
+
+[`scripts/verify.sh`](scripts/verify.sh) étend la matrice SP-01 à SP-03 avec, une fois le service `kibana-setup` terminé (vérifié via `docker compose ps --format '{{.State}}' kibana-setup`) :
+
+- alice : `GET /api/spaces/space` contient `equipe-a` et pas `equipe-b` ; lecture du dashboard de A (200) ; tentative d'écriture sur ce même dashboard refusée (403) ; Dev Tools refusé (403) ; recherche sur `equipe-a-sample` via le proxy (200) et sur `equipe-b-sample` refusée (403).
+- bob : connexion Kibana réussie ; écriture réussie (200) sur le dashboard de A.
+- carol : `GET /api/spaces/space` contient seulement `equipe-b` ; accès direct au space `equipe-a` et à son dashboard refusés (403 chacun) ; recherche sur `equipe-a-sample` via le proxy refusée (403), sur `equipe-b-sample` réussie (200).
+
+Exécuté réellement (pas seulement en théorie) : `docker compose up -d` puis `./scripts/verify.sh`, deux fois de suite (`setup`/`kibana-setup` relancés entre les deux) pour vérifier que les deux scripts de bootstrap restent idempotents sans erreur.
+
+Si un cas de cette matrice échoue, ne pas commencer par regarder le proxy : d'abord `GET /_security/_authenticate` via le proxy (le rôle custom est-il présent ?), puis `POST /_security/user/_has_privileges`, puis le même appel Kibana en session `elastic` pour voir si l'objet existe. Un 401 inattendu dans le journal du proxy indique un problème côté `run_as` ; un 403 côté Kibana ou ES indique un problème de définition de rôle ou de space, pas le proxy.
+
+### Hors périmètre de SP-04 (prévu en J2)
+
+Pas de configuration YAML source unique, pas de synchronisation générique/idempotente au sens de F74-F77 (l'idempotence testée ici est manuelle, pas garantie par construction), pas de niveau `admin`, pas de mapping automatique des groupes LDAP vers équipe/niveau (F72), pas de détection de divergence (F76), pas de mode simulation (F77). L'affectation alice/bob/carol → rôle reste statique dans `es-bootstrap.sh`, comme en SP-03. Ça arrive en J2-01 (config YAML) et J2-02 (synchro idempotente).
+
 ## Limites connues (acceptées pour un spike de 0,5 j)
 
 - **Image OpenLDAP** : `osixia/openldap:1.5.0`, pas `bitnami/openldap`. Bitnami a retiré ses images gratuites de Docker Hub en 2025 (`docker.io/bitnami/openldap:2.6` introuvable au moment du spike, voir [bitnami/containers#83267](https://github.com/bitnami/containers/issues/83267)) ; `osixia/openldap` reste tirable et très utilisé, mais en maintenance réduite. À réévaluer avant J1 (construire sa propre image `slapd` au besoin).
 - **Pas de TLS** entre Kibana et Elasticsearch, et LDAP en clair (pas LDAPS). Simplifie le proxy transparent de SP-02 ; à corriger avant toute vraie exploitation (F5, F68).
 - **Un seul nœud** Elasticsearch, licence `basic` auto-générée.
-- **Pas d'ACL** : tout utilisateur LDAP authentifié peut appeler n'importe quel index via le proxy, avec les droits de son rôle ES natif (`viewer`/`editor`, pas encore par équipe). L'ACL arrive au jalon J1 (F14).
-- **Pas de rôles ES ni de spaces Kibana par équipe** : ça arrive en SP-04 (F70-F77). Alice, bob et carol ont aujourd'hui des rôles ES built-in (`viewer`/`editor`) communs, pas un rôle par équipe.
+- **Pas d'ACL** : tout utilisateur LDAP authentifié peut appeler n'importe quel index via le proxy, avec les droits de son rôle ES (par équipe depuis SP-04, mais statique et non dérivé d'une politique déclarative). L'ACL arrive au jalon J1 (F14).
+- **Pas de YAML ni de synchro générique pour les rôles/spaces** : depuis SP-04, les rôles et spaces par équipe existent (F70-F75 validés par exécution réelle), mais l'affectation utilisateur → rôle reste statique dans `es-bootstrap.sh` (pas de mapping groupes LDAP → équipe/niveau, F72), et il n'y a ni source YAML unique, ni détection de divergence (F76), ni mode simulation (F77). Ça arrive en J2-01/J2-02.
 - **Pas de limitation des tentatives de connexion** (brute force, F8), ni de timeouts/pool de connexions LDAP dédiés (F10) : un seul bind à la fois, délai par défaut du client `go-ldap`.
 - **`go.sum` non committé** ([`proxy/Dockerfile`](proxy/Dockerfile)) : `go mod tidy` résout `github.com/go-ldap/ldap/v3` à la construction de l'image, ce qui demande un accès réseau à `docker compose build` et n'est pas reproductible à l'octet près. Acceptable pour un spike, à corriger avant J1 (committer `go.sum`, vendoring ou miroir de modules).
-- **Pas d'index de données** : hors du critère de réussite de SP-01, SP-02 et SP-03.
+- **Index de données minimal** : `equipe-a-sample`/`equipe-b-sample` n'ont qu'un document de test chacun (SP-04), juste pour vérifier l'isolation par équipe ; pas un vrai jeu de données.
 
 ## Arrêter / nettoyer
 

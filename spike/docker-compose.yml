@@ -1,10 +1,12 @@
 name: spike-proxy-elk
 
-# Stack jetable du spike SP-01 à SP-03 : Elasticsearch + Kibana 8.19 avec
+# Stack jetable du spike SP-01 à SP-04 : Elasticsearch + Kibana 8.19 avec
 # sécurité activée, un OpenLDAP peuplé d'utilisateurs de test, et un proxy Go
 # qui journalise tous les appels (SP-02) et valide le login LDAP via
 # search-then-bind puis run_as (SP-03, piste A). Login natif "elastic"
-# toujours possible en repli (SP-01).
+# toujours possible en repli (SP-01). Depuis SP-04, un rôle ES et un space
+# Kibana par équipe (equipe-a, equipe-b) isolent alice/bob/carol les uns des
+# autres (service kibana-setup, scripts/kibana-bootstrap.sh).
 # Pas de TLS entre les services, LDAP en clair : simplifie le spike, accepté
 # pour un spike jetable (voir spike/README.md, F5/F68 pour la suite).
 
@@ -113,6 +115,25 @@ services:
       interval: 10s
       timeout: 10s
       retries: 30
+
+  # Prépare Kibana une fois qu'il répond (SP-04) : spaces equipe-a/equipe-b,
+  # rôles equipe_a_viewer/equipe_a_editor/equipe_b_viewer complétés avec leurs
+  # privilèges Kibana (base read/all, spaces) et leurs index, données et
+  # dashboard de test. Service distinct de `setup` : celui-ci se termine
+  # avant que Kibana existe, donc les privilèges Kibana ne peuvent être posés
+  # qu'une fois Kibana démarré (voir scripts/kibana-bootstrap.sh).
+  kibana-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    volumes:
+      - ./scripts/kibana-bootstrap.sh:/usr/local/bin/kibana-bootstrap.sh:ro
+    networks:
+      - spike
+    depends_on:
+      kibana:
+        condition: service_healthy
+    command: ["bash", "/usr/local/bin/kibana-bootstrap.sh"]
 
   kibana:
     image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
