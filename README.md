@@ -1,39 +1,39 @@
 # Proxy ELK
 
-Proxy d'authentification et d'autorisation devant Elasticsearch auto-hébergé, avec un assistant IA intégré à Kibana par un plugin minimal. Open source (Apache-2.0).
+Authentication and authorization proxy in front of self-hosted Elasticsearch, with an AI assistant integrated into Kibana through a minimal plugin. Open source (Apache-2.0).
 
-> **Statut : conception.** Le projet est au stade du spike technique. Rien n'est encore utilisable en production.
+> **Status: design.** The project is at the technical spike stage. Nothing is production-ready yet.
 
-## Pourquoi
+## Why
 
-Certaines fonctions de sécurité d'Elasticsearch (LDAP et Active Directory, SSO, audit) sont réservées aux offres payantes. Ce projet les apporte devant Elasticsearch sous forme de proxy externe, sans toucher au code d'Elastic ni à sa vérification de licence.
+Some of Elasticsearch's security features (LDAP and Active Directory, SSO, audit) are reserved for paid tiers. This project brings them in front of Elasticsearch as an external proxy, without touching Elastic's code or its license check.
 
-## Principes
+## Principles
 
-- **Deny by default** : toute route ou action non reconnue est refusée.
-- **Droits de l'utilisateur** : l'IA n'a jamais plus de droits que la personne connectée.
-- **Lecture seule** pour tout ce que génère l'IA.
-- **Transparence** : la requête générée est toujours visible et rejouable.
-- **Kibana auto-hébergé uniquement** ; Elastic Cloud est hors périmètre.
+- **Deny by default**: any unrecognized route or action is denied.
+- **User's rights**: the AI never has more rights than the logged-in person.
+- **Read-only** for everything the AI generates.
+- **Transparency**: the generated query is always visible and replayable.
+- **Self-hosted Kibana only**; Elastic Cloud is out of scope.
 
-## Feuille de route
+## Roadmap
 
-| Jalon | Contenu | Livrable |
+| Milestone | Content | Deliverable |
 | --- | --- | --- |
-| J1 | Authentification (OIDC, LDAP/AD), ACL, audit, secrets | Un proxy utilisable seul devant Elasticsearch |
-| J2 | Assistant IA, plugin Kibana, équipes et spaces | La page « Ask » dans Kibana |
-| J3 | Serveur MCP, analyse d'un log | Accès MCP et analyse IA d'un log précis |
+| J1 | Authentication (OIDC, LDAP/AD), ACL, audit, secrets | A proxy usable on its own in front of Elasticsearch |
+| J2 | AI assistant, Kibana plugin, teams and spaces | The "Ask" page in Kibana |
+| J3 | MCP server, log analysis | MCP access and AI analysis of a specific log |
 
-Versions ciblées : Elasticsearch et Kibana 8.19. Une version 9.x sera ajoutée ensuite.
+Target versions: Elasticsearch and Kibana 8.19. A 9.x version will be added afterwards.
 
-## Contribuer
+## Contributing
 
-Le projet n'accepte pas encore de contributions externes. Les règles (DCO ou CLA) seront définies avant la première publication.
+The project does not yet accept external contributions. The rules (DCO or CLA) will be defined before the first public release.
 
-## Sécurité
+## Security
 
-Pour signaler une faille, voir [SECURITY.md](SECURITY.md). Merci de ne pas ouvrir d'issue publique pour une vulnérabilité.
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Please do not open a public issue for a vulnerability.
 
-## Licence
+## License
 
 [Apache-2.0](LICENSE).

@@ -1,45 +1,45 @@
-# Politique de sécurité
+# Security Policy
 
-## Versions supportées
+## Supported Versions
 
-Le projet n'a pas encore de version publiée. Dès la première version, seule la dernière version mineure recevra des correctifs de sécurité. Ce tableau sera mis à jour à chaque version.
+The project has no published version yet. From the first release onward, only the latest minor version will receive security fixes. This table will be updated with each release.
 
-| Version | Supportée |
+| Version | Supported |
 | --- | --- |
-| Pas encore de version publiée | - |
+| No published version yet | - |
 
-## Signaler une vulnérabilité
+## Reporting a Vulnerability
 
-**N'ouvrez pas d'issue publique pour une faille de sécurité.**
+**Do not open a public issue for a security flaw.**
 
-Deux moyens de nous prévenir :
+Two ways to reach us:
 
-1. **Signalement privé GitHub** : onglet « Security » du dépôt, puis « Report a vulnerability ».
-2. **E-mail** : ADRESSE-A-REMPLACER, avec pour objet « [SECURITY] » suivi d'un titre court.
+1. **Private GitHub report**: the repository's "Security" tab, then "Report a vulnerability".
+2. **Email**: ADDRESS-TO-FILL-IN, with subject "[SECURITY]" followed by a short title.
 
-Merci d'inclure :
+Please include:
 
-- la version ou le commit concerné ;
-- une description de la faille et de son impact ;
-- les étapes pour la reproduire (idéalement une requête ou un scénario minimal) ;
-- votre nom ou pseudonyme si vous souhaitez être cité dans le correctif.
+- the affected version or commit;
+- a description of the flaw and its impact;
+- steps to reproduce it (ideally a minimal request or scenario);
+- your name or handle if you'd like to be credited in the fix.
 
-## Ce que vous pouvez attendre
+## What You Can Expect
 
-- Un accusé de réception sous 7 jours.
-- Une première évaluation, puis des nouvelles régulières sur l'avancement.
-- Une publication coordonnée : nous vous prévenons avant la divulgation et vous citons si vous le souhaitez.
+- An acknowledgment within 7 days.
+- An initial assessment, then regular updates on progress.
+- A coordinated disclosure: we'll notify you before disclosure and credit you if you wish.
 
-Il s'agit d'un projet maintenu sur le temps libre de ses auteurs : ces délais sont un engagement de bonne foi, pas un contrat de service.
+This is a project maintained on its authors' free time: these timelines are a good-faith commitment, not a service contract.
 
-## Périmètre
+## Scope
 
-Sont considérés comme des failles de sécurité, par exemple :
+The following are considered security flaws, for example:
 
-- le contournement de l'authentification ou de l'autorisation (ACL, alias, wildcards, index système) ;
-- l'accès à Elasticsearch sans passer par le proxy ;
-- l'injection (LDAP, requête ES|QL, prompt) qui permet de lire ou d'écrire des données non autorisées ;
-- la fuite de secrets, de mots de passe ou de jetons dans les logs ou l'audit ;
-- l'usurpation d'identité via les jetons (JWT, jetons personnels, en-têtes d'identité).
+- bypassing authentication or authorization (ACL, aliases, wildcards, system indices);
+- accessing Elasticsearch without going through the proxy;
+- injection (LDAP, ES|QL query, prompt) that allows reading or writing unauthorized data;
+- leaking secrets, passwords, or tokens in logs or audit records;
+- identity spoofing via tokens (JWT, personal tokens, identity headers).
 
-Les failles d'Elasticsearch, de Kibana ou d'un fournisseur de modèle sont à signaler directement à leurs éditeurs.
+Vulnerabilities in Elasticsearch, Kibana, or a model provider should be reported directly to their vendors.
