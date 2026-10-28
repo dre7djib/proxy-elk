@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Vérifie le critère de réussite de SP-01 : Kibana accepte un login natif,
-# et OpenLDAP contient alice, bob, carol avec leurs groupes d'équipe.
+# Vérifie les critères de réussite de SP-01 et SP-02 :
+# - Kibana accepte un login natif, OpenLDAP contient alice, bob, carol
+#   avec leurs groupes d'équipe (SP-01) ;
+# - le proxy entre Kibana et Elasticsearch est un passe-plat transparent,
+#   et login/Discover fonctionnent à travers lui (SP-02).
 #
 # Usage : depuis spike/, après `docker compose up -d` :
 #   ./scripts/verify.sh
@@ -36,15 +39,40 @@ wait_for() {
 
 echo "== Attente des services =="
 wait_for "Elasticsearch" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200
+wait_for "Proxy (SP-02)" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9210
 wait_for "Kibana" curl -sf http://127.0.0.1:5601/api/status
 wait_for "OpenLDAP" "${COMPOSE[@]}" exec -T openldap ldapwhoami -x -H ldap://localhost:389 \
   -D "cn=admin,dc=example,dc=org" -w "${LDAP_ADMIN_PASSWORD}"
-echo "OK: les trois services répondent"
+echo "OK: les quatre services répondent"
 echo
 
 echo "== Elasticsearch : login natif elastic =="
 curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200 >/dev/null
 echo "OK"
+echo
+
+echo "== Proxy (SP-02) : passe-plat transparent =="
+es_body=$(curl -s -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200)
+proxy_body=$(curl -s -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9210)
+if [ "$es_body" != "$proxy_body" ]; then
+  echo "KO: la réponse via le proxy diffère de celle d'Elasticsearch en direct" >&2
+  echo "--- Elasticsearch ---" >&2
+  echo "$es_body" >&2
+  echo "--- Proxy ---" >&2
+  echo "$proxy_body" >&2
+  exit 1
+fi
+echo "OK: réponse identique en direct et via le proxy (passe-plat transparent)"
+echo
+
+echo "== Proxy (SP-02) : recherche authentifiée (approche de Discover) =="
+search_code=$(curl -s -o /dev/null -w '%{http_code}' -u "elastic:${ELASTIC_PASSWORD}" \
+  "http://127.0.0.1:9210/_search?size=0")
+if [ "$search_code" != "200" ]; then
+  echo "KO: une recherche via le proxy a répondu $search_code" >&2
+  exit 1
+fi
+echo "OK: recherche authentifiée via le proxy réussie (statut 200)"
 echo
 
 echo "== Kibana : login natif elastic via l'API interne =="
@@ -98,6 +126,7 @@ fi
 echo "OK: bind refusé comme attendu"
 echo
 
-echo "Tout est vert : Elasticsearch et Kibana acceptent le login natif elastic ;"
+echo "Tout est vert : Elasticsearch et Kibana acceptent le login natif elastic,"
+echo "à travers un proxy transparent qui journalise les appels (SP-02) ;"
 echo "OpenLDAP contient alice, bob, carol et leurs groupes d'équipe."
 echo "Rappel : OpenLDAP n'est pas encore branché à Kibana (voir SP-03)."

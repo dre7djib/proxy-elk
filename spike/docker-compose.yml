@@ -68,6 +68,34 @@ services:
       timeout: 10s
       retries: 30
 
+  # Proxy transparent du spike SP-02 : passe-plat entre Kibana et
+  # Elasticsearch qui journalise chaque appel en JSON sur stdout (voir
+  # spike/proxy/main.go). Aucune authentification ni autorisation ici,
+  # juste de l'observation (F66, F67 ; SP-03 et J1 pour le reste).
+  proxy:
+    build: ./proxy
+    environment:
+      - UPSTREAM_URL=http://elasticsearch:9200
+      - LISTEN_ADDR=:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9210:9200"
+    networks:
+      - spike
+    healthcheck:
+      # Même test que pour Elasticsearch : s'il passe à travers le proxy,
+      # c'est la preuve que le passe-plat est bien transparent au niveau HTTP.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
   kibana:
     image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
     depends_on:
@@ -75,9 +103,14 @@ services:
         condition: service_healthy
       setup:
         condition: service_completed_successfully
+      proxy:
+        condition: service_healthy
     environment:
       - SERVERNAME=kibana
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      # SP-02 : Kibana ne parle plus directement à Elasticsearch, il passe
+      # par le proxy. Le compte kibana_system s'authentifie normalement,
+      # le proxy relaie l'en-tête Authorization sans le modifier.
+      - ELASTICSEARCH_HOSTS=http://proxy:9200
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
