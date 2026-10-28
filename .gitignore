@@ -1,0 +1,7 @@
+# Secrets locaux du spike (jamais commit) — copier spike/.env.example vers spike/.env
+spike/.env
+
+docs/
+
+# macOS
+.DS_Store
