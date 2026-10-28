@@ -1,0 +1,155 @@
+name: spike-proxy-elk
+
+# Stack jetable du spike SP-01 : Elasticsearch + Kibana 8.19 avec sécurité
+# activée (login natif "elastic"), et un OpenLDAP peuplé d'utilisateurs de
+# test. OpenLDAP n'est pas encore branché à Kibana (voir SP-02/SP-03).
+# Pas de TLS entre les services : simplifie le proxy transparent de SP-02,
+# accepté pour un spike de 0,5 j (voir spike/README.md).
+
+services:
+  # Positionne le mot de passe du compte de service kibana_system une fois
+  # qu'Elasticsearch répond, puis s'arrête (pattern officiel Elastic).
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+    networks:
+      - spike
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command: >
+      bash -c '
+        echo "Definition du mot de passe de kibana_system...";
+        until curl -s -X POST \
+          -u "elastic:${ELASTIC_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          http://elasticsearch:9200/_security/user/kibana_system/_password \
+          -d "{\"password\":\"${KIBANA_PASSWORD}\"}" \
+          | grep -q "^{}";
+        do sleep 2; done;
+        echo "kibana_system pret.";
+      '
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - node.name=es01
+      - cluster.name=spike-proxy-elk
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.license.self_generated.type=basic
+      - xpack.ml.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - spike
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:5601:5601"
+    volumes:
+      - kibanadata:/usr/share/kibana/data
+    networks:
+      - spike
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '^(200|302)$'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  # OpenLDAP peuplé d'utilisateurs de test (alice, bob, carol) via le LDIF de
+  # ldap/01-bootstrap.ldif. Pas encore branché à Kibana (SP-03).
+  #
+  # Image : osixia/openldap, pas bitnami/openldap. bitnami a retiré ses images
+  # gratuites de Docker Hub en 2025 (docker.io/bitnami/openldap:2.6 introuvable
+  # au moment du spike) ; osixia/openldap reste tirable et largement utilisé,
+  # bien que le projet soit en maintenance réduite (constat journalisé dans le
+  # plan du spike).
+  openldap:
+    image: osixia/openldap:1.5.0
+    command: ["--copy-service"]
+    environment:
+      - LDAP_ORGANISATION=Spike Proxy ELK
+      - LDAP_DOMAIN=example.org
+      - LDAP_BASE_DN=dc=example,dc=org
+      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD}
+      - LDAP_CONFIG_PASSWORD=${LDAP_ADMIN_PASSWORD}
+      - LDAP_TLS=false
+      # Compte de lecture pour le search-then-bind du proxy (F4, SP-03).
+      # L'image lui ajoute une ACL de lecture sur tout l'arbre ; un compte
+      # créé à la main dans le LDIF custom n'aurait pas ce droit par défaut.
+      - LDAP_READONLY_USER=true
+      - LDAP_READONLY_USER_USERNAME=readonly
+      - LDAP_READONLY_USER_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - LDAP_REMOVE_CONFIG_AFTER_SETUP=true
+    ports:
+      - "127.0.0.1:1389:389"
+    volumes:
+      - ./ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom:ro
+      - ldapdata:/var/lib/ldap
+      - ldapconfig:/etc/ldap/slapd.d
+    networks:
+      - spike
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "ldapwhoami -x -H ldap://localhost:389 -D 'cn=admin,dc=example,dc=org' -w \"$$LDAP_ADMIN_PASSWORD\" >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+networks:
+  spike:
+    driver: bridge
+
+volumes:
+  esdata:
+  kibanadata:
+  ldapdata:
+  ldapconfig:

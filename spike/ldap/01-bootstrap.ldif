@@ -1,0 +1,72 @@
+# Bootstrap OpenLDAP pour le spike SP-01.
+# Chargé par osixia/openldap (image --copy-service) depuis le dossier monté
+# en /container/service/slapd/assets/config/bootstrap/ldif/custom.
+# La racine dc=example,dc=org et l'admin (cn=admin,dc=example,dc=org) sont
+# déjà créés par l'image à partir de LDAP_ORGANISATION/LDAP_DOMAIN : pas besoin
+# de les redéfinir ici.
+# Les mots de passe sont en clair : données de test jetables, pas un secret
+# réel. Si vous les changez ici, mettez aussi à jour spike/.env.example.
+#
+# Le compte de lecture pour le search-then-bind (F4, SP-03) n'est PAS défini
+# ici : il est créé par l'image via LDAP_READONLY_USER=true (docker-compose),
+# qui lui ajoute aussi l'ACL de lecture sur tout l'arbre. Un compte créé à la
+# main dans ce LDIF n'aurait, par défaut, le droit de lire que sa propre
+# entrée (ACL par défaut d'osixia/openldap : "by self read ... by * none").
+
+dn: ou=people,dc=example,dc=org
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=example,dc=org
+objectClass: organizationalUnit
+ou: groups
+
+# Utilisateurs de test (alice viewer A, bob editor A, carol viewer B).
+dn: uid=alice,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: alice
+cn: Alice Martin
+sn: Martin
+mail: alice@example.org
+userPassword: alicepass
+
+dn: uid=bob,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: bob
+cn: Bob Durand
+sn: Durand
+mail: bob@example.org
+userPassword: bobpass
+
+dn: uid=carol,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: carol
+cn: Carol Petit
+sn: Petit
+mail: carol@example.org
+userPassword: carolpass
+
+# Groupes d'équipe (F70-F72) : un groupe = une équipe + un niveau.
+dn: cn=equipe-a-viewer,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: equipe-a-viewer
+description: Viewers de l'équipe A
+member: uid=alice,ou=people,dc=example,dc=org
+
+dn: cn=equipe-a-editor,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: equipe-a-editor
+description: Editors de l'équipe A
+member: uid=bob,ou=people,dc=example,dc=org
+
+dn: cn=equipe-b-viewer,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: equipe-b-viewer
+description: Viewers de l'équipe B
+member: uid=carol,ou=people,dc=example,dc=org
