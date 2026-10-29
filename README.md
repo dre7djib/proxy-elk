@@ -30,6 +30,12 @@ Target versions: Elasticsearch and Kibana 8.19. A 9.x version will be added afte
 
 The project does not yet accept external contributions. The rules (DCO or CLA) will be defined before the first public release.
 
+Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/). Enable the enforcing hook once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
 ## Security
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md). Please do not open a public issue for a vulnerability.
