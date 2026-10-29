@@ -1,4 +1,4 @@
-# Spike SP-01 à SP-06 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL + jeton court
+# Spike SP-01 à SP-07 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL + jeton court + licence Basic
 
 Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). Pas de tests, pas de belle architecture : le but est de lever un risque précis.
 
@@ -13,6 +13,8 @@ Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%
 **Périmètre de SP-05** : `FROM`, `LOOKUP JOIN` et `ENRICH` testés via le proxy sur 8.19.23, en `elastic` puis en `alice` (chemin LDAP → `run_as`). Les trois fonctionnent. Constat majeur : l'ACL native d'Elasticsearch protège l'index **cible** d'un `LOOKUP JOIN` tout comme un `FROM`, mais **pas** celui d'une policy `ENRICH` (seulement un privilège cluster global `monitor_enrich`/`manage_enrich`) — fuite inter-équipe démontrée. Détail dans [SP-05 FROM LOOKUP JOIN et ENRICH via le proxy](#sp-05-from-lookup-join-et-enrich-via-le-proxy) plus bas.
 
 **Périmètre de SP-06** : jeton court d'identité (JWT RS256, F78-F82) entre un plugin Kibana et un moteur factice, via un nouveau service `engine` ([`spike/engine/`](engine/)) et une route de minting dans le proxy (`POST /_spike/identity-token`, [`spike/proxy/main.go`](proxy/main.go)). La variante retenue en premier par le plan du spike — demander le jeton via Elasticsearch, avec la session de l'utilisateur — **fonctionne, vérifié par exécution réelle, de bout en bout, plugin Kibana réellement compilé et chargé compris** : le plugin ([`spike/kibana-plugin/`](kibana-plugin/)) appelle le proxy via `asCurrentUser`, le proxy émet un jeton portant l'identité et les groupes LDAP d'alice, et le moteur en vérifie signature, expiration et destinataire, acceptant le bon jeton et refusant quatre vecteurs invalides. Détail dans [SP-06 Plugin Kibana minimal + jeton court](#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice) plus bas.
+
+**Périmètre de SP-07** : constat écrit, aucun changement de code. Spaces, rôles et feature controls `base`/`feature` tiennent sous la licence **Basic** auto-générée ; le proxy ne réécrit pas `GET /_license` ni `GET /_xpack`, et une fonction Platinum (field-level security) est refusée de la même façon en direct et à travers le proxy. Détail dans [SP-07 Licence Kibana vs proxy](#sp-07-licence-kibana-vs-proxy) plus bas.
 
 ## Démarrer
 
@@ -272,13 +274,56 @@ Un quatrième correctif, côté **proxy** cette fois (pas le Dockerfile), a ét�
 
 ### Hors périmètre de SP-06
 
-Page « Ask » réelle avec question en langage naturel et lien Discover (F39/F41, J2-05/J2-06), rotation des clés de signature (F81, J2-03), en-tête HMAC de repli (F82, J2-04 — pas nécessaire ici puisque la variante jeton via Elasticsearch fonctionne), vérification de la licence du plugin Kibana (SP-07).
+Page « Ask » réelle avec question en langage naturel et lien Discover (F39/F41, J2-05/J2-06), rotation des clés de signature (F81, J2-03), en-tête HMAC de repli (F82, J2-04 — pas nécessaire ici puisque la variante jeton via Elasticsearch fonctionne). La licence Kibana vs proxy est le constat de [SP-07](#sp-07-licence-kibana-vs-proxy).
+
+## Licence Kibana vs proxy (SP-07)
+
+Constat du 2026-10-29, stack réellement lancée (`docker.elastic.co` 8.19.23, `xpack.license.self_generated.type=basic` dans [`docker-compose.yml`](docker-compose.yml)). Aucun code modifié. Ce n'est pas un avis juridique.
+
+### Ce que dit Elastic
+
+- [Elastic License 2.0](https://github.com/elastic/elasticsearch/blob/main/licenses/ELASTIC-LICENSE-2.0.txt) et [FAQ ELv2](https://www.elastic.co/licensing/elastic-license/faq) : usage, modification et redistribution sont permis, avec trois limites. La deuxième interdit de déplacer, modifier, désactiver ou contourner la fonctionnalité de clé de licence, et d'ôter ou masquer une fonctionnalité protégée par cette clé.
+- [Abonnements self-managed](https://www.elastic.co/subscriptions), colonne Basic : contrôle d'accès par rôle, authentification fichier et native, **Kibana Spaces**, **Kibana feature controls**. Payants : sous-privilèges Kibana (note 8, administration des sous-fonctionnalités), LDAP/AD/PKI, SSO, audit Elasticsearch et Kibana, sécurité par champ et par document.
+- [Privilèges Kibana 8.19](https://www.elastic.co/guide/en/kibana/8.19/kibana-privileges.html) : `base`, `feature` et `spaces` sont le modèle utilisé par SP-04 ; le niveau sous-fonctionnalité est décrit comme une fonction d'abonnement.
+
+| Besoin du MVP | Palier Elastic | Dans ce spike |
+| --- | --- | --- |
+| Spaces, rôles, `base` read/all (F70–F75) | Basic | Déjà démontré en SP-04 (`verify.sh` : alice ne voit que `equipe-a`) |
+| Masquer Dev Tools par sous-privilège | Payant, et inutile | SP-04 : `base: ["read"]` refuse déjà Dev Tools (403) |
+| Realm LDAP/AD/OIDC, audit natif, FLS/DLS | Payant | Non configurés ; le LDAP du proxy n'active pas le realm LDAP d'ES |
+
+Le montage retenu (LDAP dans le proxy, users natifs, `run_as`) utilise des primitives Basic. Ce n'est pas le realm LDAP d'Elasticsearch sans licence. Forger une licence Platinum, patcher Kibana/ES, ou réécrire `/_license` pour simuler un palier supérieur serait un contournement ELv2 : le proxy ne le fait pas. Le code du proxy reste Apache-2.0 ; Kibana et l'image officielle restent sous ELv2. La publication du plugin (compilation contre le monorepo Kibana) reste la zone grise déjà notée dans les besoins, à trancher avant une première publication, pas ici.
+
+### Contrôles (2026-10-29)
+
+Mot de passe `elastic` : celui de `.env` (`ElasticPass123` dans [`.env.example`](.env.example)).
+
+```sh
+# Corps identiques, type basic, status active, même uid
+curl -s -u elastic:$ELASTIC_PASSWORD http://127.0.0.1:9200/_license
+curl -s -u elastic:$ELASTIC_PASSWORD http://127.0.0.1:9210/_license
+# GET /_xpack : mêmes corps (security available, graph/watcher/ml non available)
+```
+
+| Contrôle | Résultat |
+| --- | --- |
+| `GET /_license` direct (9200) vs proxy (9210) | JSON **identique** : `type=basic`, `status=active`, `uid=0a69a491-63bd-450b-9e02-24993d20cb6a` |
+| `GET /_xpack` direct vs proxy | Corps **identiques** ; `security` disponible, `graph` / `watcher` / `ml` non |
+| Kibana `GET /api/licensing/info` (session `elastic`) | Même uid, `type=basic`, `mode=basic`, `status=active` |
+| `GET /_security/_authenticate` en `elastic` | Realm `reserved` en direct et via le proxy |
+| Même appel en `alice` via le proxy | Realm **`default_native`** (le `run_as` de SP-03), pas un realm `ldap` |
+| `GET /api/spaces/space` session alice | `['equipe-a']` seulement (rappel SP-04, pas rejoué en entier) |
+| `PUT /_security/role/sp07_fls_test` avec `field_security` | **403 identique** direct et proxy : `current license is non-compliant for [field and document level security]` |
+
+Nuance, pas un contournement : `PUT /api/security/role` a accepté (204) puis stocké `dashboard: ["read","url_create"]` et `discover: ["read","generate_report"]` sous cette licence Basic. Les deux rôles de test ont été supprimés aussitôt. L'API Kibana n'a donc pas refusé l'écriture de ces sous-privilèges ; le spike n'a pas vérifié s'ils sont honorés à l'usage. Ça ne change pas le refus Platinum côté Elasticsearch (FLS), ni le besoin F75 : Dev Tools est déjà fermé par `base: read` (SP-04).
+
+**Décision** : F70–F75 (spaces, rôles, feature controls `base`/`feature`) restent sur le palier Basic. Le proxy LDAP + `run_as` ne contourne pas la vérification de licence. LDAP, SSO et audit **natifs** Elastic restent payants et hors produit.
 
 ## Limites connues (acceptées pour un spike de 0,5 j)
 
 - **Image OpenLDAP** : `osixia/openldap:1.5.0`, pas `bitnami/openldap`. Bitnami a retiré ses images gratuites de Docker Hub en 2025 (`docker.io/bitnami/openldap:2.6` introuvable au moment du spike, voir [bitnami/containers#83267](https://github.com/bitnami/containers/issues/83267)) ; `osixia/openldap` reste tirable et très utilisé, mais en maintenance réduite. À réévaluer avant J1 (construire sa propre image `slapd` au besoin).
 - **Pas de TLS** entre Kibana et Elasticsearch, et LDAP en clair (pas LDAPS). Simplifie le proxy transparent de SP-02 ; à corriger avant toute vraie exploitation (F5, F68).
-- **Un seul nœud** Elasticsearch, licence `basic` auto-générée.
+- **Un seul nœud** Elasticsearch, licence `basic` auto-générée (confirmé en SP-07 : le proxy ne la modifie pas).
 - **Pas d'ACL** : tout utilisateur LDAP authentifié peut appeler n'importe quel index via le proxy, avec les droits de son rôle ES (par équipe depuis SP-04, mais statique et non dérivé d'une politique déclarative). L'ACL arrive au jalon J1 (F14).
 - **Pas de YAML ni de synchro générique pour les rôles/spaces** : depuis SP-04, les rôles et spaces par équipe existent (F70-F75 validés par exécution réelle), mais l'affectation utilisateur → rôle reste statique dans `es-bootstrap.sh` (pas de mapping groupes LDAP → équipe/niveau, F72), et il n'y a ni source YAML unique, ni détection de divergence (F76), ni mode simulation (F77). Ça arrive en J2-01/J2-02.
 - **Pas de limitation des tentatives de connexion** (brute force, F8), ni de timeouts/pool de connexions LDAP dédiés (F10) : un seul bind à la fois, délai par défaut du client `go-ldap`.
