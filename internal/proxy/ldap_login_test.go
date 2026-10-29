@@ -182,6 +182,49 @@ func TestLDAPHandleLoginSuccessResetsLockout(t *testing.T) {
 	}
 }
 
+// TestLDAPHandleLoginNeverLeaksPassword covers F12 hygiene: the body's
+// password must never reach the response body or any response header
+// (including Set-Cookie), on both the success and the failure path.
+func TestLDAPHandleLoginNeverLeaksPassword(t *testing.T) {
+	const password = "sw0rdfish-do-not-leak"
+
+	for _, outcome := range []struct {
+		name string
+		dir  *fakeDirectory
+	}{
+		{"success", &fakeDirectory{authenticate: func(username, password string) (*auth.Identity, error) {
+			return &auth.Identity{Subject: username}, nil
+		}}},
+		{"failure", &fakeDirectory{authenticate: func(username, password string) (*auth.Identity, error) {
+			return nil, errAuthFailed
+		}}},
+	} {
+		t.Run(outcome.name, func(t *testing.T) {
+			login := &LDAPLogin{
+				Directory: outcome.dir,
+				OnSuccess: func(w http.ResponseWriter, r *http.Request, id auth.Identity) {
+					http.SetCookie(w, &http.Cookie{Name: "proxy_session", Value: "opaque-session-value"})
+					w.WriteHeader(http.StatusOK)
+				},
+			}
+			req := httptest.NewRequest(http.MethodPost, "/auth/ldap", strings.NewReader(`{"username":"alice","password":"`+password+`"}`))
+			rec := httptest.NewRecorder()
+			login.HandleLogin(rec, req)
+
+			if strings.Contains(rec.Body.String(), password) {
+				t.Fatalf("response body leaked password: %s", rec.Body.String())
+			}
+			for name, values := range rec.Header() {
+				for _, v := range values {
+					if strings.Contains(v, password) {
+						t.Fatalf("response header %s leaked password: %s", name, v)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestLDAPHandleLoginNilLimiterNeverLocksOut(t *testing.T) {
 	login := failingLDAPLogin(nil)
 	for i := 0; i < 50; i++ {

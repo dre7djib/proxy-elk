@@ -47,3 +47,9 @@ ldap:
   max_failures: 5
   failure_window: 15m
   lockout_for: 15m
+
+# Required as soon as oidc or ldap is active: the login session (shared by
+# both) is an HMAC-signed cookie, not a server-side store.
+session:
+  secret: "${env:SESSION_SECRET}"   # at least 32 bytes
+  ttl: 8h  # default

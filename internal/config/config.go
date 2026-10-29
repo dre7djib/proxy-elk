@@ -7,6 +7,7 @@ type Config struct {
 	Elasticsearch Elasticsearch `yaml:"elasticsearch" json:"elasticsearch"`
 	OIDC          OIDC          `yaml:"oidc" json:"oidc"`
 	LDAP          LDAP          `yaml:"ldap" json:"ldap"`
+	Session       Session       `yaml:"session" json:"session"`
 
 	secrets secretSet
 }
@@ -64,6 +65,15 @@ type LDAP struct {
 	// FailureWindow and LockoutFor are Go duration strings. Default to 15m.
 	FailureWindow string `yaml:"failure_window" json:"failure_window"`
 	LockoutFor    string `yaml:"lockout_for" json:"lockout_for"`
+}
+
+// Session configures the HMAC-signed login session shared by OIDC and
+// LDAP. Secret comes from a secret reference and must be at least 32
+// bytes. Required as soon as OIDC or LDAP is active.
+type Session struct {
+	Secret string `yaml:"secret" json:"secret"`
+	// TTL is a Go duration string (e.g. "8h"). Defaults to 8h.
+	TTL string `yaml:"ttl" json:"ttl"`
 }
 
 // Warning is a non-fatal configuration problem, such as a world-readable secret file.

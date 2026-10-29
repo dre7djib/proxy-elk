@@ -43,6 +43,9 @@ func (c *Config) validate(secrets secretSet) error {
 	if _, ok := secrets.paths["elasticsearch.api_key"]; !ok || c.Elasticsearch.APIKey == "" {
 		return fmt.Errorf("elasticsearch.api_key must be ${env:NAME} or ${file:PATH}")
 	}
+	oidcActive := c.OIDC.Issuer != ""
+	ldapActive := c.LDAP.URL != "" || len(c.LDAP.URLs) > 0
+
 	if c.OIDC.Issuer != "" {
 		if c.OIDC.ClientID == "" {
 			return fmt.Errorf("oidc.client_id is required when oidc.issuer is set")
@@ -111,6 +114,21 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 		if c.LDAP.MaxFailures < 1 {
 			return fmt.Errorf("ldap.max_failures must be at least 1")
+		}
+	}
+
+	if oidcActive || ldapActive {
+		if _, ok := secrets.paths["session.secret"]; !ok || c.Session.Secret == "" {
+			return fmt.Errorf("session.secret must be ${env:NAME} or ${file:PATH}")
+		}
+		if len(c.Session.Secret) < 32 {
+			return fmt.Errorf("session.secret must be at least 32 bytes")
+		}
+		if c.Session.TTL == "" {
+			c.Session.TTL = "8h"
+		}
+		if d, err := time.ParseDuration(c.Session.TTL); err != nil || d <= 0 {
+			return fmt.Errorf("session.ttl must be a positive Go duration (e.g. \"8h\")")
 		}
 	}
 	return nil

@@ -1,0 +1,167 @@
+package main
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+
+	"proxy/internal/config"
+)
+
+const testSessionSecret = "01234567890123456789012345678901"
+
+func baseConfig() *config.Config {
+	cfg, _, err := config.Load(writeTestConfig(`
+listen: ":0"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`))
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+func writeTestConfig(body string) string {
+	f, err := os.CreateTemp("", "proxy-*.yaml")
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(body); err != nil {
+		panic(err)
+	}
+	return f.Name()
+}
+
+func TestBuildMuxDeniesUnknownRoutesByDefault(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	cfg := baseConfig()
+	mux, err := buildMux(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// /auth/me is always registered and must reject (401), not fall
+	// through to the catch-all 403.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/me", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/auth/me status = %d", rec.Code)
+	}
+}
+
+func TestBuildMuxWiresLDAPRoute(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
+	cfg, _, err := config.Load(writeTestConfig(`
+listen: ":0"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux, err := buildMux(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A malformed body hits LDAPLogin.HandleLogin itself (400), proving the
+	// route is wired rather than caught by the "/" 403 default. This never
+	// dials the directory.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/auth/ldap", strings.NewReader("not json"))
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBuildMuxWiresOIDCRoutes(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("OIDC_SECRET", "idp-secret")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issuer string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{
+			"issuer": issuer, "authorization_endpoint": issuer + "/authorize",
+			"token_endpoint": issuer + "/token", "jwks_uri": issuer + "/jwks",
+		})
+	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		n := base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1})
+		json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "kid": "k1", "n": n, "e": e}}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	issuer = srv.URL
+
+	cfg, _, err := config.Load(writeTestConfig(`
+listen: ":0"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+oidc:
+  issuer: ` + issuer + `
+  client_id: proxy
+  client_secret: "${env:OIDC_SECRET}"
+  redirect_url: https://proxy.example/callback
+session:
+  secret: "${env:SESSION_SECRET}"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	built, err := buildMux(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	built.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("/auth/login status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Missing state cookie/params: 400 from OIDCLogin.HandleCallback, not
+	// the "/" 403 default.
+	rec = httptest.NewRecorder()
+	built.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/callback", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("/auth/callback status = %d", rec.Code)
+	}
+}

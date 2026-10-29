@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -9,11 +8,10 @@ import (
 	"proxy/internal/auth"
 )
 
-// LDAPDirectory is satisfied by *auth.LDAP; a narrow interface so tests can
-// stub a directory without dialing one.
-type LDAPDirectory interface {
-	Authenticate(ctx context.Context, username, password string) (*auth.Identity, error)
-}
+// LDAPDirectory is auth.PasswordAuthenticator under the name this package
+// used before that interface existed; *auth.LDAP satisfies it, and tests
+// stub it without dialing a real directory.
+type LDAPDirectory = auth.PasswordAuthenticator
 
 // LDAPLogin authenticates POST /auth/ldap requests against a directory.
 // OnSuccess is called with the verified Identity; it is responsible for

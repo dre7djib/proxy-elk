@@ -193,9 +193,12 @@ oidc:
 	}
 }
 
+const testSessionSecret = "01234567890123456789012345678901"
+
 func TestLoadOIDCResolvesSecret(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("OIDC_SECRET", "idp-secret")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
@@ -206,6 +209,8 @@ oidc:
   client_id: proxy
   redirect_url: https://proxy.example/callback
   client_secret: "${env:OIDC_SECRET}"
+session:
+  secret: "${env:SESSION_SECRET}"
 `)
 	cfg, _, err := Load(path)
 	if err != nil {
@@ -244,6 +249,7 @@ ldap:
 func TestLoadLDAPAllowsStartTLS(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
@@ -257,6 +263,8 @@ ldap:
   base_dn: "ou=people,dc=example,dc=org"
   user_filter: "(uid=%s)"
   groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
 `)
 	if _, _, err := Load(path); err != nil {
 		t.Fatal(err)
@@ -266,6 +274,7 @@ ldap:
 func TestLoadLDAPAllowsExplicitPlaintext(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
@@ -279,6 +288,8 @@ ldap:
   base_dn: "ou=people,dc=example,dc=org"
   user_filter: "(uid=%s)"
   groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
 `)
 	if _, _, err := Load(path); err != nil {
 		t.Fatal(err)
@@ -288,6 +299,7 @@ ldap:
 func TestLoadLDAPAcceptsLDAPS(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
@@ -300,6 +312,8 @@ ldap:
   base_dn: "ou=people,dc=example,dc=org"
   user_filter: "(uid=%s)"
   groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
 `)
 	cfg, _, err := Load(path)
 	if err != nil {
@@ -358,6 +372,7 @@ ldap:
 func TestLoadLDAPDefaults(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
@@ -370,6 +385,8 @@ ldap:
   base_dn: "ou=people,dc=example,dc=org"
   user_filter: "(uid=%s)"
   groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
 `)
 	cfg, _, err := Load(path)
 	if err != nil {
@@ -381,11 +398,15 @@ ldap:
 	if cfg.LDAP.NestedGroups {
 		t.Fatal("nested_groups should default to false")
 	}
+	if cfg.Session.TTL != "8h" {
+		t.Fatalf("session ttl default = %q", cfg.Session.TTL)
+	}
 }
 
 func TestLoadLDAPURLsFailover(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
@@ -398,6 +419,8 @@ ldap:
   base_dn: "ou=people,dc=example,dc=org"
   user_filter: "(uid=%s)"
   groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
 `)
 	cfg, _, err := Load(path)
 	if err != nil {
@@ -479,6 +502,136 @@ ldap:
 	}
 }
 
+func TestLoadRequiresSessionSecretWhenOIDCActive(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("OIDC_SECRET", "idp-secret")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+oidc:
+  issuer: https://idp.example
+  client_id: proxy
+  redirect_url: https://proxy.example/callback
+  client_secret: "${env:OIDC_SECRET}"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "session.secret") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRequiresSessionSecretWhenLDAPActive(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "session.secret") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsSessionSecretPlaintext(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "`+testSessionSecret+`"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "session.secret") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsShortSessionSecret(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", "too-short")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "at least 32 bytes") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidSessionTTL(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+session:
+  secret: "${env:SESSION_SECRET}"
+  ttl: not-a-duration
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "session.ttl") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadSessionOptionalWithoutOIDCOrLDAP(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`)
+	if _, _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadMalformedReference(t *testing.T) {
 	for _, body := range []string{
 		`api_key: "${env:}"`,
@@ -503,6 +656,7 @@ func TestExampleConfig(t *testing.T) {
 	t.Setenv("ES_API_KEY", secret)
 	t.Setenv("OIDC_CLIENT_SECRET", "example-oidc-secret")
 	t.Setenv("LDAP_BIND_PASSWORD", "example-ldap-secret")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
 	cfg, _, err := Load("../../configs/proxy.example.yaml")
 	if err != nil {
 		t.Fatal(err)
