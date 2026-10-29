@@ -78,6 +78,39 @@ func TestBuildMuxDeniesUnknownRoutesByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildMuxHealthAndMetrics(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	cfg := baseConfig()
+	mux, err := buildMux(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/health", "/healthz"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", path, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/metrics status = %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "go_") && !strings.Contains(body, "process_") {
+		t.Fatalf("/metrics body missing go_/process_ metrics: %s", body)
+	}
+
+	// Still denied: unknown routes aren't accidentally opened by the health/metrics wiring.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything-else", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("/anything-else status = %d", rec.Code)
+	}
+}
+
 func TestBuildMuxWiresLDAPRoute(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")

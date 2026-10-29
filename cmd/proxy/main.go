@@ -38,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "listening on %s\n", cfg.Listen)
-	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
+	if err := http.ListenAndServe(cfg.Listen, proxy.Instrument(mux)); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
 		os.Exit(1)
 	}
@@ -110,6 +110,9 @@ func buildMux(cfg *config.Config) (*http.ServeMux, error) {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", proxy.HandleHealth)
+	mux.HandleFunc("/healthz", proxy.HandleHealth)
+	mux.Handle("/metrics", proxy.MetricsHandler())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "access denied", http.StatusForbidden)
 	})

@@ -26,6 +26,22 @@ Some of Elasticsearch's security features (LDAP and Active Directory, SSO, audit
 
 Target versions: Elasticsearch and Kibana 8.19. A 9.x version will be added afterwards.
 
+## Running the proxy image
+
+The proxy ships as a Docker image (no demo compose, no Kibana image — see J1-13 for that). Config stays 100% file-based: mount your YAML read-only and pass secrets (`${env:...}` refs in the YAML) as environment variables.
+
+```bash
+docker build -t proxy-elk .
+docker run --rm -p 8080:8080 \
+  -e SESSION_SECRET=... -e ES_API_KEY=... \
+  -v "$PWD/configs/my-proxy.yaml:/etc/proxy/proxy.yaml:ro" \
+  proxy-elk
+curl -sf localhost:8080/health   # liveness, no auth
+curl -sf localhost:8080/metrics | head  # Prometheus, no auth
+```
+
+The image runs as non-root (uid 65532) and never embeds `configs/proxy.example.yaml` as a runtime config — mounting a real config is mandatory.
+
 ## Contributing
 
 The project does not yet accept external contributions. The rules (DCO or CLA) will be defined before the first public release.

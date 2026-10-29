@@ -2,6 +2,7 @@
 spike/.env
 
 docs/
+.cursor/
 
 # macOS
 .DS_Store
