@@ -1,0 +1,13 @@
+{
+  "name": "spike_ask",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SP-06: minimal Kibana plugin, relays a short-lived token from the proxy to a dummy engine (F39-F41, F78-F82). Throwaway, not a product plugin.",
+  "kibana": {
+    "version": "kibana"
+  },
+  "scripts": {
+    "build": "node ../../scripts/plugin_helpers build",
+    "kbn:bootstrap": "node ../../scripts/plugin_helpers build --dev"
+  }
+}

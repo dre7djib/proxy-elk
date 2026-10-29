@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect a Go module
+        id: gomod
+        run: |
+          if [ -f go.mod ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/setup-go@v5
+        if: steps.gomod.outputs.present == 'true'
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        if: steps.gomod.outputs.present == 'true'
+        run: test -z "$(gofmt -l .)"
+
+      - name: Static analysis
+        if: steps.gomod.outputs.present == 'true'
+        run: go vet ./...
+
+      - name: Tests
+        if: steps.gomod.outputs.present == 'true'
+        run: go test ./...
+
+      - name: No Go module yet
+        if: steps.gomod.outputs.present == 'false'
+        run: echo "No go.mod: nothing to build for now."
