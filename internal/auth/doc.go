@@ -1,2 +1,2 @@
-// Package auth authenticates callers. Not implemented yet.
+// Package auth authenticates callers and produces their identity.
 package auth

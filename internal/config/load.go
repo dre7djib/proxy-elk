@@ -41,5 +41,16 @@ func (c *Config) validate(secrets secretSet) error {
 	if _, ok := secrets.paths["elasticsearch.api_key"]; !ok || c.Elasticsearch.APIKey == "" {
 		return fmt.Errorf("elasticsearch.api_key must be ${env:NAME} or ${file:PATH}")
 	}
+	if c.OIDC.Issuer != "" {
+		if c.OIDC.ClientID == "" {
+			return fmt.Errorf("oidc.client_id is required when oidc.issuer is set")
+		}
+		if c.OIDC.RedirectURL == "" {
+			return fmt.Errorf("oidc.redirect_url is required when oidc.issuer is set")
+		}
+		if _, ok := secrets.paths["oidc.client_secret"]; !ok || c.OIDC.ClientSecret == "" {
+			return fmt.Errorf("oidc.client_secret must be ${env:NAME} or ${file:PATH}")
+		}
+	}
 	return nil
 }

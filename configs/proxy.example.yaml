@@ -7,3 +7,12 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+
+# Omit the oidc section entirely to disable OIDC login.
+oidc:
+  issuer: https://keycloak.example/realms/proxy
+  client_id: proxy
+  client_secret: "${env:OIDC_CLIENT_SECRET}"
+  redirect_url: https://proxy.example/callback
+  scopes: [openid, email, profile, groups]
+  groups_claim: groups

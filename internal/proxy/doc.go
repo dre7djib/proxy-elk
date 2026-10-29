@@ -1,2 +1,2 @@
-// Package proxy is the HTTP reverse proxy. Not implemented yet.
+// Package proxy is the HTTP reverse proxy.
 package proxy

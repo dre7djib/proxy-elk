@@ -174,6 +174,51 @@ elasticsearch:
 	}
 }
 
+func TestLoadOIDCRequiresClientSecret(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+oidc:
+  issuer: https://idp.example
+  client_id: proxy
+  redirect_url: https://proxy.example/callback
+  client_secret: "plaintext"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "oidc.client_secret") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadOIDCResolvesSecret(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("OIDC_SECRET", "idp-secret")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+oidc:
+  issuer: https://idp.example
+  client_id: proxy
+  redirect_url: https://proxy.example/callback
+  client_secret: "${env:OIDC_SECRET}"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OIDC.ClientSecret != "idp-secret" {
+		t.Fatalf("client secret = %q", cfg.OIDC.ClientSecret)
+	}
+	if strings.Contains(cfg.Mask("x="+cfg.OIDC.ClientSecret), cfg.OIDC.ClientSecret) {
+		t.Fatal("mask leaked oidc client secret")
+	}
+}
+
 func TestLoadMalformedReference(t *testing.T) {
 	for _, body := range []string{
 		`api_key: "${env:}"`,
@@ -196,12 +241,16 @@ elasticsearch:
 func TestExampleConfig(t *testing.T) {
 	const secret = "example-secret-value"
 	t.Setenv("ES_API_KEY", secret)
+	t.Setenv("OIDC_CLIENT_SECRET", "example-oidc-secret")
 	cfg, _, err := Load("../../configs/proxy.example.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Elasticsearch.APIKey != secret {
 		t.Fatalf("api key = %q", cfg.Elasticsearch.APIKey)
+	}
+	if cfg.OIDC.ClientSecret != "example-oidc-secret" {
+		t.Fatalf("oidc client secret = %q", cfg.OIDC.ClientSecret)
 	}
 	if strings.Contains(cfg.Mask(secret), secret) {
 		t.Fatal("mask leaked example secret")
