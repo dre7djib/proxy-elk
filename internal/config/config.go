@@ -1,6 +1,8 @@
 // Package config loads YAML configuration and resolves secret references.
 package config
 
+import "proxy/internal/acl"
+
 // Config is the process configuration. Secret fields hold resolved values.
 type Config struct {
 	Listen        string        `yaml:"listen" json:"listen"`
@@ -8,9 +10,20 @@ type Config struct {
 	OIDC          OIDC          `yaml:"oidc" json:"oidc"`
 	LDAP          LDAP          `yaml:"ldap" json:"ldap"`
 	JWT           JWT           `yaml:"jwt" json:"jwt"`
+	ACL           ACL           `yaml:"acl" json:"acl"`
 	Session       Session       `yaml:"session" json:"session"`
 
 	secrets secretSet
+}
+
+// ACL is the declarative, read-only access policy (F14/F19): a non-empty
+// set of allow rules, fail-closed otherwise. KnownGroups, when set,
+// restricts which groups rules may reference. SystemIndices overrides the
+// F17 default system index patterns.
+type ACL struct {
+	KnownGroups   []string   `yaml:"known_groups" json:"known_groups"`
+	SystemIndices []string   `yaml:"system_indices" json:"system_indices"`
+	Rules         []acl.Rule `yaml:"rules" json:"rules"`
 }
 
 // Elasticsearch is the upstream cluster. APIKey comes from a secret reference.

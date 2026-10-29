@@ -19,13 +19,24 @@ import (
 
 const testSessionSecret = "01234567890123456789012345678901"
 
+// minimalACL is appended to test configs that don't exercise ACL specifics
+// but need buildMux/config.Load to succeed now that acl.rules is mandatory.
+const minimalACL = `
+acl:
+  rules:
+    - name: default
+      groups: [testers]
+      indices: ["*"]
+      actions: [read]
+`
+
 func baseConfig() *config.Config {
 	cfg, _, err := config.Load(writeTestConfig(`
 listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
-`))
+`+minimalACL))
 	if err != nil {
 		panic(err)
 	}
@@ -85,7 +96,7 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`))
+`+minimalACL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +155,7 @@ oidc:
   redirect_url: https://proxy.example/callback
 session:
   secret: "${env:SESSION_SECRET}"
-`))
+`+minimalACL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +206,7 @@ jwt:
   issuer: https://idp.example
   audience: proxy-m2m
   jwks_url: ` + srv.URL + `/jwks
-`))
+`+minimalACL))
 	if err != nil {
 		t.Fatal(err)
 	}

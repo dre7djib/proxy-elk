@@ -8,6 +8,17 @@ import (
 	"testing"
 )
 
+// minimalACL is appended to test configs that don't care about ACL
+// specifics but need Load to succeed now that acl.rules is mandatory.
+const minimalACL = `
+acl:
+  rules:
+    - name: default
+      groups: [testers]
+      indices: ["*"]
+      actions: [read]
+`
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "proxy.yaml")
@@ -25,7 +36,7 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
-`)
+`+minimalACL)
 	cfg, warnings, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +95,7 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${file:`+keyPath+`}"
-`)
+`+minimalACL)
 	cfg, warnings, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +125,7 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${file:`+keyPath+`}"
-`)
+`+minimalACL)
 	cfg, warnings, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +222,7 @@ oidc:
   client_secret: "${env:OIDC_SECRET}"
 session:
   secret: "${env:SESSION_SECRET}"
-`)
+`+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +276,7 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`)
+`+minimalACL)
 	if _, _, err := Load(path); err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +301,7 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`)
+`+minimalACL)
 	if _, _, err := Load(path); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +325,7 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`)
+`+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +398,7 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`)
+`+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -421,7 +432,7 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`)
+`+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -626,7 +637,7 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
-`)
+`+minimalACL)
 	if _, _, err := Load(path); err != nil {
 		t.Fatal(err)
 	}
@@ -671,13 +682,65 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
-`)
+`+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.JWT.Issuer != "" {
 		t.Fatalf("jwt = %+v", cfg.JWT)
+	}
+}
+
+func TestLoadRequiresACLRules(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "acl.rules") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidACLRule(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+acl:
+  rules:
+    - name: bad
+      groups: [team-a]
+      indices: [logs-*]
+      actions: [write]
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unsupported action") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsACLUnknownGroup(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+acl:
+  known_groups: [team-a]
+  rules:
+    - name: bad
+      groups: [team-b]
+      indices: [logs-*]
+      actions: [read]
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unknown group") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

@@ -34,6 +34,12 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+acl:
+  rules:
+    - name: default
+      groups: [testers]
+      indices: ["*"]
+      actions: [read]
 `)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)

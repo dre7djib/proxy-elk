@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"proxy/internal/acl"
 )
 
 // Load reads path, resolves ${env:NAME} and ${file:PATH} references, and
@@ -139,6 +141,13 @@ func (c *Config) validate(secrets secretSet) error {
 		if d, err := time.ParseDuration(c.Session.TTL); err != nil || d <= 0 {
 			return fmt.Errorf("session.ttl must be a positive Go duration (e.g. \"8h\")")
 		}
+	}
+
+	if len(c.ACL.Rules) == 0 {
+		return fmt.Errorf("acl.rules must not be empty")
+	}
+	if _, err := acl.Parse(c.ACL.Rules, c.ACL.KnownGroups, c.ACL.SystemIndices); err != nil {
+		return err
 	}
 	return nil
 }

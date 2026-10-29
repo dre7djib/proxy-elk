@@ -57,6 +57,26 @@ jwt:
   jwks_url: https://idp.example/realms/demo/protocol/openid-connect/certs
   # groups_claim: groups
 
+# Declarative, read-only access policy (F14/F15/F17/F19): allow rules only,
+# fail-closed. Required — the proxy refuses to start without at least one
+# rule. A rule matches a caller if their subject is in users, or any of
+# their groups intersects groups; indices are glob patterns (path.Match)
+# resolved against concrete index names (aliases are resolved first, F15).
+# The only action this MVP supports is read.
+acl:
+  # known_groups: [equipe-a-viewer, equipe-a-editor]  # optional: unknown
+  # group referenced by a rule fails to load
+  # system_indices: [.kibana*, .security*, .tasks*, .enrich-*]  # default shown
+  rules:
+    - name: equipe-a-read
+      groups: [equipe-a-viewer, equipe-a-editor]
+      indices: [equipe-a-*, shared-ref]
+      actions: [read]
+    - name: alice-extra
+      users: [alice]
+      indices: [alice-scratch]
+      actions: [read]
+
 # Required as soon as oidc or ldap is active: the login session (shared by
 # both) is an HMAC-signed cookie, not a server-side store.
 session:
