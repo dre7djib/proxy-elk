@@ -1,0 +1,209 @@
+package config
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "proxy.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadEnvResolvesAndRedacts(t *testing.T) {
+	const secret = "super-secret-value"
+	t.Setenv("ES_API_KEY", secret)
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`)
+	cfg, warnings, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: %v", warnings)
+	}
+	if cfg.Listen != ":8080" || cfg.Elasticsearch.URL != "https://elasticsearch:9200" {
+		t.Fatalf("literals changed: %+v", cfg.Redacted())
+	}
+	if cfg.Elasticsearch.APIKey != secret {
+		t.Fatalf("api key = %q", cfg.Elasticsearch.APIKey)
+	}
+
+	red := cfg.Redacted()
+	if red.Elasticsearch.APIKey != "***" {
+		t.Fatalf("redacted api key = %q", red.Elasticsearch.APIKey)
+	}
+	if red.Listen != ":8080" {
+		t.Fatalf("redacted listen = %q", red.Listen)
+	}
+	b, err := json.Marshal(red)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), secret) {
+		t.Fatalf("redacted json leaked secret: %s", b)
+	}
+	masked := cfg.Mask("token=" + secret + " end")
+	if strings.Contains(masked, secret) || masked != "token=*** end" {
+		t.Fatalf("mask = %q", masked)
+	}
+}
+
+func TestLoadMissingEnv(t *testing.T) {
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY_ABSENT}"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "secret env:ES_API_KEY_ABSENT missing") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadFileSecret(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "api_key")
+	if err := os.WriteFile(keyPath, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${file:`+keyPath+`}"
+`)
+	cfg, warnings, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: %v", warnings)
+	}
+	if cfg.Elasticsearch.APIKey != "file-secret" {
+		t.Fatalf("api key = %q", cfg.Elasticsearch.APIKey)
+	}
+	if strings.Contains(cfg.Mask("x=file-secret"), "file-secret") {
+		t.Fatal("mask leaked file secret")
+	}
+}
+
+func TestLoadWorldReadableFile(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "api_key")
+	if err := os.WriteFile(keyPath, []byte("file-secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keyPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${file:`+keyPath+`}"
+`)
+	cfg, warnings, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Elasticsearch.APIKey != "file-secret" {
+		t.Fatalf("api key = %q", cfg.Elasticsearch.APIKey)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, "world-readable") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if strings.Contains(warnings[0].Message, "file-secret") {
+		t.Fatalf("warning leaked secret: %s", warnings[0].Message)
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${file:/no/such/secret}"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "secret file:/no/such/secret missing") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadEmptyFileSecret(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "api_key")
+	if err := os.WriteFile(keyPath, []byte("  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${file:`+keyPath+`}"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsPlaintextAPIKey(t *testing.T) {
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "plaintext-key"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "elasticsearch.api_key") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadMalformedReference(t *testing.T) {
+	for _, body := range []string{
+		`api_key: "${env:}"`,
+		`api_key: "prefix-${env:ES_API_KEY}"`,
+		`api_key: "${unknown:X}"`,
+	} {
+		path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  `+body+`
+`)
+		_, _, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), "malformed secret reference") {
+			t.Fatalf("body %s: err = %v", body, err)
+		}
+	}
+}
+
+func TestExampleConfig(t *testing.T) {
+	const secret = "example-secret-value"
+	t.Setenv("ES_API_KEY", secret)
+	cfg, _, err := Load("../../configs/proxy.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Elasticsearch.APIKey != secret {
+		t.Fatalf("api key = %q", cfg.Elasticsearch.APIKey)
+	}
+	if strings.Contains(cfg.Mask(secret), secret) {
+		t.Fatal("mask leaked example secret")
+	}
+}
