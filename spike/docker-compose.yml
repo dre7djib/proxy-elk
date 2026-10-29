@@ -1,12 +1,18 @@
 name: spike-proxy-elk
 
-# Stack jetable du spike SP-01 à SP-04 : Elasticsearch + Kibana 8.19 avec
+# Stack jetable du spike SP-01 à SP-06 : Elasticsearch + Kibana 8.19 avec
 # sécurité activée, un OpenLDAP peuplé d'utilisateurs de test, et un proxy Go
 # qui journalise tous les appels (SP-02) et valide le login LDAP via
 # search-then-bind puis run_as (SP-03, piste A). Login natif "elastic"
 # toujours possible en repli (SP-01). Depuis SP-04, un rôle ES et un space
 # Kibana par équipe (equipe-a, equipe-b) isolent alice/bob/carol les uns des
-# autres (service kibana-setup, scripts/kibana-bootstrap.sh).
+# autres (service kibana-setup, scripts/kibana-bootstrap.sh). Depuis SP-06,
+# le proxy émet aussi un jeton court signé (JWT RS256, F78) sur
+# POST /_spike/identity-token, vérifié par un moteur factice (`engine`,
+# F79) : la paire de clés du spike vit dans ./keys (voir keys/README.md).
+# Kibana est construit depuis kibana/Dockerfile (image officielle + plugin
+# spike_ask précompilé, kibana-plugin/) ; voir
+# spike/README.md#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice.
 # Pas de TLS entre les services, LDAP en clair : simplifie le spike, accepté
 # pour un spike jetable (voir spike/README.md, F5/F68 pour la suite).
 
@@ -95,6 +101,15 @@ services:
       # /_security/profile/_activate (voir proxy/main.go,
       # profileActivateMiddleware, et scripts/es-bootstrap.sh).
       - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
+      # SP-06 : émission du jeton court (F78) sur POST /_spike/identity-token,
+      # jamais relayé à Elasticsearch. Clé privée montée ci-dessous (lecture
+      # seule) ; le moteur (`engine`) ne reçoit que la clé publique.
+      - JWT_PRIVATE_KEY_PATH=/keys/private.pem
+      - JWT_ISSUER=spike-proxy
+      - JWT_AUDIENCE=spike-engine
+      - JWT_TTL=5m
+    volumes:
+      - ./keys/private.pem:/keys/private.pem:ro
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -116,6 +131,33 @@ services:
       timeout: 10s
       retries: 30
 
+  # Moteur factice du spike SP-06 (F78-F82) : processus séparé du proxy, qui
+  # vérifie le jeton court (signature RS256, expiration, destinataire) sans
+  # jamais détenir la clé privée (voir spike/engine/, keys/README.md). Pas
+  # d'appel à Elasticsearch, pas de question en langage naturel : ce n'est
+  # pas l'assistant IA (J2-06/J2-07), seulement le vérificateur de jeton que
+  # SP-06 doit valider. Port non publié sur l'hôte : seuls le proxy/Kibana
+  # (réseau spike) ont besoin de l'atteindre ; verify-sp06.sh y accède via
+  # `docker compose exec`.
+  engine:
+    build: ./engine
+    environment:
+      - JWT_PUBLIC_KEY_PATH=/keys/public.pem
+      - JWT_AUDIENCE=spike-engine
+      # Tolérance sur l'écart d'horloge entre le proxy et le moteur (F79) :
+      # généreuse ici (processus voisins sur la même machine), mais le
+      # mécanisme est le même qui serait nécessaire entre deux hôtes.
+      - JWT_CLOCK_SKEW=60s
+    volumes:
+      - ./keys/public.pem:/keys/public.pem:ro
+    networks:
+      - spike
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
   # Prépare Kibana une fois qu'il répond (SP-04) : spaces equipe-a/equipe-b,
   # rôles equipe_a_viewer/equipe_a_editor/equipe_b_viewer complétés avec leurs
   # privilèges Kibana (base read/all, spaces) et leurs index, données et
@@ -135,14 +177,26 @@ services:
         condition: service_healthy
     command: ["bash", "/usr/local/bin/kibana-bootstrap.sh"]
 
+  # Image construite depuis kibana/Dockerfile (SP-06) : Kibana officielle
+  # 8.19.23 + plugin spike_ask installé (bin/kibana-plugin install). Constat
+  # d'exécution mis à jour : contrairement au constat initial de ce ticket
+  # (bootstrap trop lourd pour les ~4 Go alloués ici), le build a fini par
+  # réussir dans ce même environnement après deux correctifs mineurs du
+  # Dockerfile (owner manquant dans kibana.json, exécution en utilisateur
+  # non-root plutôt que --allow-root pour la tâche interne de webpack) —
+  # voir spike/README.md#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice.
   kibana:
-    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    build:
+      context: .
+      dockerfile: kibana/Dockerfile
     depends_on:
       elasticsearch:
         condition: service_healthy
       setup:
         condition: service_completed_successfully
       proxy:
+        condition: service_healthy
+      engine:
         condition: service_healthy
     environment:
       - SERVERNAME=kibana
@@ -155,6 +209,11 @@ services:
       - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
       - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
       - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      # SP-06 : pas besoin de surcharger `spikeAsk.engineUrl` ici (ce serait
+      # SPIKEASK_ENGINEURL en convention kibana-docker, dots retirés) : le
+      # defaultValue du schéma de config (kibana-plugin/spike_ask/server/config.ts)
+      # pointe déjà vers http://engine:8080, qui est l'adresse correcte du
+      # service `engine` ci-dessous sur le réseau `spike`.
     mem_limit: 1g
     ports:
       - "127.0.0.1:5601:5601"

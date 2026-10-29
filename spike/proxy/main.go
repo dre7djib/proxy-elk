@@ -5,16 +5,22 @@
 // l'utilisateur (`es-security-runas-user`, piste A du spike). Les appels des
 // comptes de service (kibana_system, elastic, proxy_service) et tout ce qui
 // n'est pas du Basic auth (ApiKey, Bearer, pas d'en-tête) traversent sans
-// modification. Code jetable : pas de tests, ACL/J1 hors périmètre.
+// modification. Depuis SP-06, le proxy répond aussi lui-même (sans relayer à
+// Elasticsearch) sur POST /_spike/identity-token : il émet un jeton court
+// signé (JWT RS256, F78) portant l'identité déjà authentifiée de la requête.
+// Code jetable : pas de tests, ACL/J1 hors périmètre.
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // logEntry est une ligne du journal des appels (une par requête).
@@ -73,12 +80,14 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
-// ldapConfig regroupe les paramètres du search-then-bind (F4).
+// ldapConfig regroupe les paramètres du search-then-bind (F4) et, depuis
+// SP-06, de la recherche de groupes (claim `groups` du jeton court, F78).
 type ldapConfig struct {
 	URL              string
 	ReadonlyDN       string
 	ReadonlyPassword string
 	BaseDN           string
+	GroupsBaseDN     string
 	CacheTTL         time.Duration
 }
 
@@ -87,6 +96,18 @@ type ldapConfig struct {
 type proxyServiceConfig struct {
 	User     string
 	Password string
+}
+
+// jwtConfig regroupe ce qu'il faut pour émettre le jeton court (F78, SP-06) :
+// la clé privée du proxy (jamais partagée, voir spike/keys/README.md), le
+// destinataire attendu (le moteur factice) et la durée de validité (5 à
+// 15 min demandées par F78 ; le spike retient la borne basse, 5 min, pour
+// réduire la fenêtre d'abus pendant les tests).
+type jwtConfig struct {
+	PrivateKey *rsa.PrivateKey
+	Issuer     string
+	Audience   string
+	TTL        time.Duration
 }
 
 func main() {
@@ -103,6 +124,7 @@ func main() {
 		ReadonlyDN:       getenv("LDAP_READONLY_DN", "cn=readonly,dc=example,dc=org"),
 		ReadonlyPassword: os.Getenv("LDAP_READONLY_PASSWORD"),
 		BaseDN:           getenv("LDAP_BASE_DN", "ou=people,dc=example,dc=org"),
+		GroupsBaseDN:     getenv("LDAP_GROUPS_BASE_DN", "ou=groups,dc=example,dc=org"),
 		CacheTTL:         parseDuration(getenv("LDAP_CACHE_TTL", "2m")),
 	}
 
@@ -137,11 +159,29 @@ func main() {
 
 	// Comptes qui traversent le proxy sans passer par le LDAP : les comptes
 	// de service (kibana_system, proxy_service) et le superutilisateur natif
-	// (elastic), conservé pour les logins de secours (SP-01).
+	// (elastic), conservé pour les logins de secours (SP-01). Depuis SP-06,
+	// ce sont aussi les comptes à qui le proxy refuse de minter un jeton
+	// court (F78) : un jeton représente un utilisateur réel, pas un compte
+	// de service.
 	passthrough := map[string]bool{
 		"elastic":       true,
 		"kibana_system": true,
 		proxySvc.User:   true,
+	}
+
+	// SP-06 : clé privée du proxy pour signer le jeton court (F78, F80 : le
+	// plugin et le moteur n'en détiennent jamais que la partie publique,
+	// voir spike/keys/README.md). Pas de rotation ici (F81 = J2-03) : une
+	// seule paire de clés pour tout le spike.
+	jwtPrivateKey, err := loadRSAPrivateKey(getenv("JWT_PRIVATE_KEY_PATH", "/keys/private.pem"))
+	if err != nil {
+		log.Fatalf("clé privée JWT invalide (SP-06, F78): %v", err)
+	}
+	jwtCfg := jwtConfig{
+		PrivateKey: jwtPrivateKey,
+		Issuer:     getenv("JWT_ISSUER", "spike-proxy"),
+		Audience:   getenv("JWT_AUDIENCE", "spike-engine"),
+		TTL:        parseDuration(getenv("JWT_TTL", "5m")),
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -149,10 +189,11 @@ func main() {
 
 	authCache := newLDAPAuthCache()
 	profileFix := profileActivateMiddleware(proxy, ldapCfg, authCache, passthrough, shadowPassword)
-	auth := authMiddleware(profileFix, ldapCfg, proxySvc, passthrough, authCache)
+	mint := mintIdentityTokenMiddleware(profileFix, ldapCfg, jwtCfg, upstream, passthrough)
+	auth := authMiddleware(mint, ldapCfg, proxySvc, passthrough, authCache)
 	handler := logMiddleware(auth)
 
-	log.Printf("proxy SP-03 : écoute sur %s, relaie vers %s, LDAP %s", listenAddr, upstream, ldapCfg.URL)
+	log.Printf("proxy SP-02..SP-06 : écoute sur %s, relaie vers %s, LDAP %s, jeton court aud=%s", listenAddr, upstream, ldapCfg.URL, jwtCfg.Audience)
 	if err := http.ListenAndServe(listenAddr, handler); err != nil {
 		log.Fatal(err)
 	}
@@ -418,6 +459,245 @@ func profileActivateMiddleware(next http.Handler, cfg ldapConfig, cache *ldapAut
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mintIdentityTokenMiddleware répond, sans jamais relayer à Elasticsearch,
+// sur POST /_spike/identity-token (SP-06, F78) : il émet un jeton court
+// signé (JWT RS256, TTL jwtCfg.TTL) portant l'identité déjà authentifiée par
+// authMiddleware. C'est la variante « jeton demandé via Elasticsearch, avec
+// la session de l'utilisateur » retenue en premier par le plan du spike
+// (étape 6) : le plugin Kibana n'a besoin d'aucun canal séparé, il passe par
+// le client Elasticsearch scopé à l'utilisateur courant (asCurrentUser).
+//
+// Deux cas d'identité, selon ce qu'authMiddleware a déjà constaté :
+//   - "ldap-runas" : la requête portait un Basic auth LDAP, déjà résolu et
+//     réécrit en run_as. L'identité est connue sans appel supplémentaire —
+//     c'est le chemin attendu, puisque Kibana rejoue le mot de passe
+//     d'alice sur chaque appel asCurrentUser (constaté dès SP-02/SP-03).
+//   - "passthrough" sans utilisateur déjà connu : la requête portait une
+//     ApiKey ou un Bearer (point de vigilance documenté dans le plan de ce
+//     ticket). Un utilisateur réel peut malgré tout se cacher derrière une
+//     ApiKey de session Kibana ; ce chemin introspecte l'identité via
+//     GET /_security/_authenticate sur Elasticsearch, en relayant l'en-tête
+//     Authorization d'origine (jamais vu par ce middleware autrement). Pas
+//     d'en-tête du tout : refusé (401).
+//
+// Dans tous les cas, un compte de service (passthrough : elastic,
+// kibana_system, proxy_service) ne reçoit jamais de jeton : un jeton
+// représente un utilisateur réel, groupes compris, pas un compte technique.
+func mintIdentityTokenMiddleware(next http.Handler, cfg ldapConfig, jwtCfg jwtConfig, upstream string, passthrough map[string]bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_spike/identity-token" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "méthode non supportée, POST attendu", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Constat d'exécution (SP-06, plugin réellement compilé) : le client
+		// Elasticsearch officiel utilisé par asCurrentUser.transport.request
+		// côté plugin fait un "product check" sur chaque réponse et rejette
+		// (ProductNotSupportedError) tout ce qui ne porte pas cet en-tête —
+		// y compris nos réponses 401/403 synthétiques, jamais relayées à un
+		// vrai Elasticsearch. Sans lui, le plugin voit un échec de transport
+		// avant même de pouvoir lire le corps JSON de l'erreur.
+		w.Header().Set("X-elastic-product", "Elasticsearch")
+
+		info, _ := r.Context().Value(authInfoCtxKey).(*authInfo)
+
+		var user, authScheme string
+
+		switch {
+		case info != nil && info.Scheme == "ldap-runas":
+			user = info.RunAs
+			authScheme = "jwt-mint-basic"
+
+		case info != nil && info.Scheme == "passthrough":
+			if info.User != "" {
+				// Basic auth d'un compte de service.
+				info.Scheme = "jwt-denied-service"
+				http.Error(w, "les comptes de service ne reçoivent pas de jeton court", http.StatusForbidden)
+				return
+			}
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				info.Scheme = "jwt-denied-anonymous"
+				http.Error(w, "authentification requise pour obtenir un jeton", http.StatusUnauthorized)
+				return
+			}
+			resolved, err := resolveIdentityViaAuthenticate(upstream, authHeader)
+			if err != nil {
+				log.Printf("introspection _authenticate échouée (SP-06): %v", err)
+				info.Scheme = "jwt-denied-apikey"
+				http.Error(w, "identité introuvable auprès d'Elasticsearch", http.StatusUnauthorized)
+				return
+			}
+			if passthrough[resolved] {
+				info.Scheme = "jwt-denied-service"
+				http.Error(w, "les comptes de service ne reçoivent pas de jeton court", http.StatusForbidden)
+				return
+			}
+			user = resolved
+			authScheme = "jwt-mint-apikey"
+
+		default:
+			// "none" (ne devrait pas apparaître, authMiddleware tourne
+			// toujours avant), "basic-invalid", "ldap-denied" : déjà
+			// refusés plus haut dans la chaîne dans les deux derniers cas.
+			http.Error(w, "authentification requise pour obtenir un jeton", http.StatusUnauthorized)
+			return
+		}
+
+		groups, err := lookupLDAPGroups(cfg, user)
+		if err != nil {
+			// Pas bloquant : le moteur factice ne fait pas d'autorisation
+			// par groupe dans ce spike (F79 ne vérifie que
+			// signature/expiration/destinataire) ; un jeton avec une liste
+			// de groupes vide vaut mieux qu'un refus total sur un aléa LDAP.
+			log.Printf("recherche de groupes LDAP échouée pour %s (SP-06): %v", user, err)
+			groups = []string{}
+		}
+
+		token, err := mintJWT(jwtCfg, user, groups)
+		if err != nil {
+			log.Printf("échec de signature du jeton (SP-06): %v", err)
+			http.Error(w, "échec de l'émission du jeton", http.StatusInternalServerError)
+			return
+		}
+
+		if info != nil {
+			info.Scheme = authScheme
+			info.User = user
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
+	})
+}
+
+// resolveIdentityViaAuthenticate interroge GET /_security/_authenticate sur
+// Elasticsearch, en relayant l'en-tête Authorization fourni, pour résoudre
+// l'utilisateur derrière une ApiKey ou un Bearer que ce proxy ne déchiffre
+// pas lui-même. Constat à vérifier en exécutant le spike (voir
+// spike/README.md#sp-06) : SP-02/SP-03 montrent que Kibana rejoue plutôt un
+// Basic auth sur asCurrentUser, donc ce chemin pourrait ne jamais se
+// déclencher en pratique avec le flux LDAP retenu depuis SP-03.
+func resolveIdentityViaAuthenticate(upstream, authHeader string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(upstream, "/")+"/_security/_authenticate", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("_authenticate a répondu %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.Username == "" {
+		return "", errors.New("réponse _authenticate sans username")
+	}
+	return payload.Username, nil
+}
+
+// lookupLDAPGroups recherche les groupes groupOfNames dont l'utilisateur est
+// membre (F78 : le jeton court porte les groupes, pas seulement le nom
+// d'utilisateur). Utilise le compte de lecture du search-then-bind (F4) ;
+// aucun mot de passe utilisateur n'est nécessaire ici, contrairement à
+// ldapAuthenticate — c'est une recherche, pas une vérification de mot de
+// passe.
+func lookupLDAPGroups(cfg ldapConfig, username string) ([]string, error) {
+	conn, err := ldap.DialURL(cfg.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connexion LDAP: %w", err)
+	}
+	defer conn.Close()
+
+	if err := conn.Bind(cfg.ReadonlyDN, cfg.ReadonlyPassword); err != nil {
+		return nil, fmt.Errorf("bind du compte de lecture: %w", err)
+	}
+
+	userDN := fmt.Sprintf("uid=%s,%s", ldap.EscapeFilter(username), cfg.BaseDN)
+	filter := fmt.Sprintf("(&(objectClass=groupOfNames)(member=%s))", ldap.EscapeFilter(userDN))
+
+	searchReq := ldap.NewSearchRequest(
+		cfg.GroupsBaseDN,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		filter,
+		[]string{"cn"},
+		nil,
+	)
+
+	sr, err := conn.Search(searchReq)
+	if err != nil {
+		return nil, fmt.Errorf("recherche LDAP: %w", err)
+	}
+
+	groups := make([]string, 0, len(sr.Entries))
+	for _, entry := range sr.Entries {
+		if cn := entry.GetAttributeValue("cn"); cn != "" {
+			groups = append(groups, cn)
+		}
+	}
+	return groups, nil
+}
+
+// mintJWT construit le jeton court (F78) : RS256, issuer=spike-proxy (ou
+// JWT_ISSUER), audience=moteur (JWT_AUDIENCE), sujet=utilisateur, claim
+// "groups", expiration dans jwtCfg.TTL. Signature asymétrique : seul le
+// proxy détient la clé privée (F80 : ni le plugin ni le moteur n'en ont
+// besoin pour émettre, seulement pour vérifier avec la clé publique, F79).
+func mintJWT(cfg jwtConfig, subject string, groups []string) (string, error) {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"iss":    cfg.Issuer,
+		"aud":    cfg.Audience,
+		"sub":    subject,
+		"groups": groups,
+		"iat":    jwt.NewNumericDate(now),
+		"exp":    jwt.NewNumericDate(now.Add(cfg.TTL)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(cfg.PrivateKey)
+}
+
+// loadRSAPrivateKey lit une clé privée RSA au format PEM, PKCS#1 (celui que
+// produit `openssl genrsa`, voir spike/keys/README.md) ou PKCS#8.
+func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("lecture de %s: %w", path, err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return nil, fmt.Errorf("%s ne contient pas de bloc PEM valide", path)
+	}
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	keyAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("clé PKCS1 et PKCS8 invalides: %w", err)
+	}
+	key, ok := keyAny.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errors.New("la clé PEM n'est pas une clé RSA")
+	}
+	return key, nil
 }
 
 // ldapAuthCache évite un bind LDAP à chaque appel : SP-02 a mesuré ~145

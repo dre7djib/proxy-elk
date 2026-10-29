@@ -1,0 +1,13 @@
+{
+  "id": "spikeAsk",
+  "version": "1.0.0",
+  "kibanaVersion": "kibana",
+  "configPath": ["spikeAsk"],
+  "server": true,
+  "ui": true,
+  "requiredPlugins": [],
+  "optionalPlugins": [],
+  "owner": {
+    "name": "Spike Proxy ELK"
+  }
+}

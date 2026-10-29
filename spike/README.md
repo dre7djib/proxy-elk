@@ -1,4 +1,4 @@
-# Spike SP-01 à SP-05 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL
+# Spike SP-01 à SP-06 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL + jeton court
 
 Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). Pas de tests, pas de belle architecture : le but est de lever un risque précis.
 
@@ -11,6 +11,8 @@ Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%
 **Périmètre de SP-04** : les rôles ES built-in `viewer`/`editor` de SP-03 (accès à tous les spaces) sont remplacés par un rôle par couple équipe/niveau (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`) et un space Kibana par équipe (`equipe-a`, `equipe-b`). Nouveau service `kibana-setup` ([`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh)), lancé après que Kibana soit joignable, qui crée les spaces et complète les rôles via l'API rôles de Kibana (privilèges `elasticsearch` + `kibana`, pas l'API rôles d'Elasticsearch directement). **Critère de réussite atteint par exécution réelle** : alice lit seulement le space et les données de l'équipe A, bob modifie un dashboard de l'équipe A, carol ne voit rien de l'équipe A — vérifié via [`scripts/verify.sh`](scripts/verify.sh). Détail dans [Rôles ES et spaces Kibana par équipe](#rôles-es-et-spaces-kibana-par-équipe-sp-04) plus bas.
 
 **Périmètre de SP-05** : `FROM`, `LOOKUP JOIN` et `ENRICH` testés via le proxy sur 8.19.23, en `elastic` puis en `alice` (chemin LDAP → `run_as`). Les trois fonctionnent. Constat majeur : l'ACL native d'Elasticsearch protège l'index **cible** d'un `LOOKUP JOIN` tout comme un `FROM`, mais **pas** celui d'une policy `ENRICH` (seulement un privilège cluster global `monitor_enrich`/`manage_enrich`) — fuite inter-équipe démontrée. Détail dans [SP-05 FROM LOOKUP JOIN et ENRICH via le proxy](#sp-05-from-lookup-join-et-enrich-via-le-proxy) plus bas.
+
+**Périmètre de SP-06** : jeton court d'identité (JWT RS256, F78-F82) entre un plugin Kibana et un moteur factice, via un nouveau service `engine` ([`spike/engine/`](engine/)) et une route de minting dans le proxy (`POST /_spike/identity-token`, [`spike/proxy/main.go`](proxy/main.go)). La variante retenue en premier par le plan du spike — demander le jeton via Elasticsearch, avec la session de l'utilisateur — **fonctionne, vérifié par exécution réelle, de bout en bout, plugin Kibana réellement compilé et chargé compris** : le plugin ([`spike/kibana-plugin/`](kibana-plugin/)) appelle le proxy via `asCurrentUser`, le proxy émet un jeton portant l'identité et les groupes LDAP d'alice, et le moteur en vérifie signature, expiration et destinataire, acceptant le bon jeton et refusant quatre vecteurs invalides. Détail dans [SP-06 Plugin Kibana minimal + jeton court](#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice) plus bas.
 
 ## Démarrer
 
@@ -211,6 +213,67 @@ Résultat : `FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host`, ex�
 
 Parser F27 (extraction des index, résolution des policies ENRICH, fail-closed), toute modification du proxy (`/_query` traverse déjà le passe-plat existant sans changement, visible dans `docker compose logs proxy | grep '"path":"/_query"'`), et le cluster distant (CCS) — la syntaxe `cluster:index` de `FROM` est documentée mais pas testée avec un vrai cluster remote. Détail du ticket dans [SP-05](../docs/Tickets%20Proxy%20Elasticsearch/SP-05%20ES-QL%20-%20FROM%2C%20LOOKUP%20JOIN%2C%20ENRICH%20via%20proxy.md).
 
+## SP-06 Plugin Kibana minimal + jeton court (moteur factice)
+
+Objectif du ticket : savoir comment un plugin Kibana obtient un jeton court pour transmettre l'identité de l'utilisateur à un moteur IA, et vérifier que ce jeton porte bien signature, expiration et destinataire vérifiables (F78-F82). Le plan du spike proposait de tester en premier la variante « jeton demandé via Elasticsearch, avec la session de l'utilisateur », avec repli sur un en-tête signé HMAC (F82) si elle échoue.
+
+### Architecture testée
+
+```
+alice → plugin (UI) → route serveur Kibana → asCurrentUser → proxy (POST /_spike/identity-token) → JWT RS256
+                                                                                                        │
+                                                        plugin relaie le jeton, sans le lire ni le modifier (F80)
+                                                                                                        ▼
+                                                                                   moteur factice (POST /whoami)
+                                                                                   vérifie signature/exp/aud (F79)
+```
+
+- Le **proxy** ([`proxy/main.go`](proxy/main.go), `mintIdentityTokenMiddleware`) répond lui-même, sans jamais relayer à Elasticsearch, sur `POST /_spike/identity-token` : il émet un JWT RS256 (`iss=spike-proxy`, `aud=spike-engine`, `sub=<utilisateur>`, `groups=<groupes LDAP>`, TTL 5 min) signé avec une clé privée que lui seul détient ([`keys/README.md`](keys/README.md)).
+- Le **moteur factice** ([`engine/`](engine/), nouveau service `engine`) ne détient que la clé **publique** correspondante : il vérifie la méthode de signature (RS256 uniquement), la signature, l'expiration (avec 60 s de tolérance d'horloge) et le destinataire, puis renvoie l'identité portée par le jeton. Aucun appel à Elasticsearch, aucune logique d'assistant IA : ce n'est pas J2-06/J2-07.
+- Le **plugin** ([`kibana-plugin/spike_ask/`](kibana-plugin/)) ne détient aucune clé (F80) : sa route serveur unique (`POST /api/spike_ask/ask`) appelle `/_spike/identity-token` via `context.core.elasticsearch.client.asCurrentUser` (jamais `asInternalUser`, pour que le jeton porte l'identité réelle de l'utilisateur et non celle de `kibana_system`), puis relaie le jeton reçu, verbatim, au moteur.
+
+### Constat d'exécution — deux identités possibles derrière `asCurrentUser`
+
+Le proxy doit résoudre un utilisateur avant de minter un jeton, mais `asCurrentUser` peut porter deux formes d'authentification selon le provider Kibana actif :
+
+- **Basic LDAP** (le chemin de SP-03/SP-04) : Kibana rejoue le mot de passe d'alice sur chaque appel `asCurrentUser`, déjà intercepté par `authMiddleware` (`run_as`). Le proxy connaît alors l'identité sans appel supplémentaire — c'est le chemin **vérifié par exécution réelle** ci-dessous.
+- **ApiKey/Bearer** (point de vigilance documenté avant exécution) : si jamais rencontré, le proxy introspecte `GET /_security/_authenticate` en relayant l'en-tête d'origine. Ce chemin existe dans le code (`auth_scheme: jwt-mint-apikey`) mais **n'a pas été déclenché** en pratique avec le flux LDAP retenu depuis SP-03 : `docker compose logs proxy | grep jwt-mint` ne montre que `jwt-mint-basic` lors des tests.
+
+### Constat d'exécution — le plugin compile et se charge, contrairement au constat initial
+
+Un premier essai avait conclu que le plugin ne pouvait pas être compilé dans cet environnement (clone bloqué côté réseau, puis hypothèse d'un bootstrap pnpm trop lourd pour les ~4 Go de RAM alloués au moteur Docker, `docker info --format '{{.MemTotal}}'`). **Ce constat était erroné.** Repris depuis zéro, le build complet ([`kibana/Dockerfile`](kibana/Dockerfile), qui suit la procédure officielle d'Elastic : checkout du monorepo `elastic/kibana`, `pnpm kbn bootstrap`, puis `plugin_helpers build`) réussit de bout en bout dans ce même environnement, en ~7-10 min. Les vrais blocages étaient trois bugs précis, pas une limite de ressources :
+
+1. `kibana.json` sans `owner.name` — requis par le validateur de manifeste Kibana ;
+2. `plugin_helpers build` sans `--kibana-version` déclenche un prompt interactif (`inquirer`) qui plante faute de TTY dans `docker build` (`ERR_USE_AFTER_CLOSE: readline was closed`) ;
+3. la tâche interne `buildWebpackPackages` refuse de tourner en root (« Kibana should not be run as root »), sans flag `--allow-root` propre exposé par `plugin_helpers build` — corrigé en construisant comme l'utilisateur non-root `node` (déjà présent dans l'image `node:*-bookworm`) plutôt qu'en cherchant un contournement supplémentaire.
+
+Un quatrième correctif, côté **proxy** cette fois (pas le Dockerfile), a été nécessaire pour que la route serveur du plugin fonctionne réellement : le client Elasticsearch officiel utilisé par `asCurrentUser.transport.request` fait un « product check » sur chaque réponse HTTP et rejette (`ProductNotSupportedError`) tout ce qui ne porte pas l'en-tête `X-elastic-product: Elasticsearch` — y compris les réponses 401/403 synthétiques de `POST /_spike/identity-token`, jamais relayées à un vrai Elasticsearch. `mintIdentityTokenMiddleware` pose maintenant cet en-tête sur toutes ses réponses (voir [`proxy/main.go`](proxy/main.go)).
+
+**Conséquence** : `docker-compose.yml` construit désormais l'image `kibana` depuis [`kibana/Dockerfile`](kibana/Dockerfile) (plugin inclus) au lieu de l'image officielle nue, et le critère de réussite du ticket (« le plugin se charge ») est vérifié par exécution réelle, pas seulement par reproduction `curl` de l'appel `asCurrentUser`.
+
+### Vérification
+
+[`scripts/verify-sp06.sh`](scripts/verify-sp06.sh), exécuté réellement contre la stack (`docker compose up -d` puis le script, comme les autres SP-0x) :
+
+| Cas | Résultat |
+| --- | --- |
+| Anonyme sur `POST /_spike/identity-token` | 401 |
+| Compte de service (`elastic`) sur `POST /_spike/identity-token` | 403 (un jeton représente un utilisateur, pas un compte technique) |
+| Alice (Basic LDAP via le proxy) | 200, jeton reçu |
+| Jeton d'alice relayé au moteur (`POST /whoami`) | 200, `sub=alice`, `groups=["equipe-a-viewer"]`, `aud=spike-engine` |
+| **Route du plugin sans cookie** (`POST /api/spike_ask/ask`) | **401, pas 404 : le plugin est bien chargé** |
+| **Route du plugin avec la session Kibana d'alice** (`POST /api/spike_ask/ask`) | **200**, `sub=alice`, `groups=["equipe-a-viewer"]` (via `asCurrentUser` → proxy → moteur) |
+| Jeton expiré (bonne clé, forgé pour le test) | 401 « jeton expiré » |
+| Mauvais destinataire (bonne clé, forgé pour le test) | 401 « destinataire invalide » |
+| Mauvaise signature (forgé avec [`keys/wrong-private.pem`](keys/wrong-private.pem)) | 401 « signature invalide » |
+| Témoin positif (jeton forgé, bons claims, bonne clé) | 200 — confirme que les refus ci-dessus viennent du jeton, pas d'un autre problème |
+
+**Critère de réussite du ticket pleinement atteint** : signature, expiration, destinataire tous vérifiés par exécution réelle (succès et échecs), **et** le plugin Kibana lui-même se charge et sert l'identité réelle d'alice de bout en bout.
+
+### Hors périmètre de SP-06
+
+Page « Ask » réelle avec question en langage naturel et lien Discover (F39/F41, J2-05/J2-06), rotation des clés de signature (F81, J2-03), en-tête HMAC de repli (F82, J2-04 — pas nécessaire ici puisque la variante jeton via Elasticsearch fonctionne), vérification de la licence du plugin Kibana (SP-07).
+
 ## Limites connues (acceptées pour un spike de 0,5 j)
 
 - **Image OpenLDAP** : `osixia/openldap:1.5.0`, pas `bitnami/openldap`. Bitnami a retiré ses images gratuites de Docker Hub en 2025 (`docker.io/bitnami/openldap:2.6` introuvable au moment du spike, voir [bitnami/containers#83267](https://github.com/bitnami/containers/issues/83267)) ; `osixia/openldap` reste tirable et très utilisé, mais en maintenance réduite. À réévaluer avant J1 (construire sa propre image `slapd` au besoin).
@@ -223,6 +286,9 @@ Parser F27 (extraction des index, résolution des policies ENRICH, fail-closed),
 - **Index de données minimal** : `equipe-a-sample`/`equipe-b-sample` n'ont qu'un document de test chacun (SP-04), juste pour vérifier l'isolation par équipe ; pas un vrai jeu de données.
 - **ENRICH non protégé par index source (SP-05)** : confirmé par exécution réelle, voir [SP-05](#sp-05-from-lookup-join-et-enrich-via-le-proxy). F27 doit résoudre la policy vers son index source avant d'autoriser l'exécution ; ni le proxy actuel ni Elasticsearch ne le font nativement.
 - **Index de test SP-05 non nettoyés par `docker compose down -v`** : `equipe-*-sp05-*` et les policies `sp05-owners-*-policy` sont créés par [`scripts/esql-seed.sh`](scripts/esql-seed.sh) directement sur Elasticsearch ; ils disparaissent avec le volume `esdata` comme le reste, mais ne sont pas recréés automatiquement par `docker compose up` (relancer `esql-seed.sh` à la main si besoin).
+- **Build du plugin Kibana lent** (~7-10 min) : le `docker-compose.yml` de ce spike construit désormais `kibana` depuis [`kibana/Dockerfile`](kibana/Dockerfile) (plugin [`kibana-plugin/`](kibana-plugin/) inclus, voir le constat SP-06), ce qui allonge un `docker compose up --build` par rapport à l'image officielle nue. Acceptable pour un spike ; à mettre en cache (registre d'images, CI) avant une vraie exploitation.
+- **Chemin ApiKey/Bearer du jeton court non démontré (SP-06)** : le code du proxy sait introspecter `GET /_security/_authenticate` pour un utilisateur authentifié par ApiKey plutôt que par Basic LDAP, mais ce chemin n'a jamais été déclenché en pratique (Kibana rejoue systématiquement un Basic auth avec le flux LDAP retenu depuis SP-03) ; il reste écrit mais non exercé par les tests réels.
+- **Pas de rotation des clés de signature (F81)** : une seule paire de clés RSA pour tout le spike ([`keys/`](keys/)). La rotation sans interruption de service est le périmètre de J2-03.
 
 ## Arrêter / nettoyer
 
