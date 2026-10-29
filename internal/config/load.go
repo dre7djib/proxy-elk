@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -53,24 +54,63 @@ func (c *Config) validate(secrets secretSet) error {
 			return fmt.Errorf("oidc.client_secret must be ${env:NAME} or ${file:PATH}")
 		}
 	}
-	if c.LDAP.URL != "" {
+	if c.LDAP.URL != "" || len(c.LDAP.URLs) > 0 {
+		if c.LDAP.URL != "" && len(c.LDAP.URLs) > 0 {
+			return fmt.Errorf("ldap: specify either ldap.url or ldap.urls, not both")
+		}
+		urls := c.LDAP.URLs
+		if len(urls) == 0 {
+			urls = []string{c.LDAP.URL}
+		}
+		for _, u := range urls {
+			if u == "" {
+				return fmt.Errorf("ldap.urls must not contain an empty address")
+			}
+			if strings.HasPrefix(u, "ldap://") && !c.LDAP.StartTLS && !c.LDAP.InsecureAllowPlaintext {
+				return fmt.Errorf("ldap url %q is plaintext: use ldaps://, set ldap.start_tls, or ldap.insecure_allow_plaintext for dev", u)
+			}
+		}
+
 		if c.LDAP.BindDN == "" {
-			return fmt.Errorf("ldap.bind_dn is required when ldap.url is set")
+			return fmt.Errorf("ldap.bind_dn is required when ldap.url or ldap.urls is set")
 		}
 		if _, ok := secrets.paths["ldap.bind_password"]; !ok || c.LDAP.BindPassword == "" {
 			return fmt.Errorf("ldap.bind_password must be ${env:NAME} or ${file:PATH}")
 		}
 		if c.LDAP.BaseDN == "" {
-			return fmt.Errorf("ldap.base_dn is required when ldap.url is set")
+			return fmt.Errorf("ldap.base_dn is required when ldap.url or ldap.urls is set")
 		}
 		if strings.Count(c.LDAP.UserFilter, "%s") != 1 {
 			return fmt.Errorf("ldap.user_filter must contain exactly one %%s")
 		}
 		if c.LDAP.GroupsBaseDN == "" {
-			return fmt.Errorf("ldap.groups_base_dn is required when ldap.url is set")
+			return fmt.Errorf("ldap.groups_base_dn is required when ldap.url or ldap.urls is set")
 		}
-		if strings.HasPrefix(c.LDAP.URL, "ldap://") && !c.LDAP.StartTLS && !c.LDAP.InsecureAllowPlaintext {
-			return fmt.Errorf("ldap.url is plaintext: use ldaps://, set ldap.start_tls, or ldap.insecure_allow_plaintext for dev")
+
+		if c.LDAP.GroupCacheTTL == "" {
+			c.LDAP.GroupCacheTTL = "5m"
+		}
+		if c.LDAP.FailureWindow == "" {
+			c.LDAP.FailureWindow = "15m"
+		}
+		if c.LDAP.LockoutFor == "" {
+			c.LDAP.LockoutFor = "15m"
+		}
+		if c.LDAP.MaxFailures == 0 {
+			c.LDAP.MaxFailures = 5
+		}
+		for name, value := range map[string]string{
+			"ldap.group_cache_ttl": c.LDAP.GroupCacheTTL,
+			"ldap.failure_window":  c.LDAP.FailureWindow,
+			"ldap.lockout_for":     c.LDAP.LockoutFor,
+		} {
+			d, err := time.ParseDuration(value)
+			if err != nil || d <= 0 {
+				return fmt.Errorf("%s must be a positive Go duration (e.g. \"5m\")", name)
+			}
+		}
+		if c.LDAP.MaxFailures < 1 {
+			return fmt.Errorf("ldap.max_failures must be at least 1")
 		}
 	}
 	return nil

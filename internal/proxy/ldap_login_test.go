@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"proxy/internal/auth"
 )
@@ -108,5 +109,86 @@ func TestLDAPHandleLoginRejectsEmptyUsername(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func failingLDAPLogin(limiter *auth.Limiter) *LDAPLogin {
+	return &LDAPLogin{
+		Directory: &fakeDirectory{authenticate: func(username, password string) (*auth.Identity, error) {
+			return nil, errAuthFailed
+		}},
+		Limiter:   limiter,
+		OnSuccess: func(w http.ResponseWriter, r *http.Request, id auth.Identity) {},
+	}
+}
+
+func newLDAPLoginReq(username string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/auth/ldap", strings.NewReader(`{"username":"`+username+`","password":"wrong"}`))
+	req.RemoteAddr = "192.0.2.1:54321"
+	return req
+}
+
+func TestLDAPHandleLoginLocksOutAfterMaxFailures(t *testing.T) {
+	limiter := auth.NewLimiter(auth.LockoutConfig{MaxFailures: 2, FailureWindow: time.Minute, LockoutFor: time.Minute})
+	login := failingLDAPLogin(limiter)
+
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		login.HandleLogin(rec, newLDAPLoginReq("alice"))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d", i+1, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	login.HandleLogin(rec, newLDAPLoginReq("alice"))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("locked-out status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "lock") {
+		t.Fatalf("response leaked lockout state: %s", rec.Body.String())
+	}
+}
+
+func TestLDAPHandleLoginSuccessResetsLockout(t *testing.T) {
+	limiter := auth.NewLimiter(auth.LockoutConfig{MaxFailures: 2, FailureWindow: time.Minute, LockoutFor: time.Minute})
+
+	fail := failingLDAPLogin(limiter)
+	fail.HandleLogin(httptest.NewRecorder(), newLDAPLoginReq("alice"))
+
+	var onSuccessCalled bool
+	succeed := &LDAPLogin{
+		Directory: &fakeDirectory{authenticate: func(username, password string) (*auth.Identity, error) {
+			return &auth.Identity{Subject: username}, nil
+		}},
+		Limiter: limiter,
+		OnSuccess: func(w http.ResponseWriter, r *http.Request, id auth.Identity) {
+			onSuccessCalled = true
+			w.WriteHeader(http.StatusOK)
+		},
+	}
+	rec := httptest.NewRecorder()
+	succeed.HandleLogin(rec, newLDAPLoginReq("alice"))
+	if rec.Code != http.StatusOK || !onSuccessCalled {
+		t.Fatalf("status = %d onSuccessCalled = %v", rec.Code, onSuccessCalled)
+	}
+
+	// The reset above should mean this 2nd failure (not the 3rd overall) is
+	// the first of a fresh window: still not locked out.
+	rec = httptest.NewRecorder()
+	fail.HandleLogin(rec, newLDAPLoginReq("alice"))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestLDAPHandleLoginNilLimiterNeverLocksOut(t *testing.T) {
+	login := failingLDAPLogin(nil)
+	for i := 0; i < 50; i++ {
+		rec := httptest.NewRecorder()
+		login.HandleLogin(rec, newLDAPLoginReq("alice"))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d", i+1, rec.Code)
+		}
 	}
 }

@@ -32,3 +32,18 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
   ca_file: /etc/proxy/ldap-ca.pem
   # insecure_allow_plaintext: true   # dev only
+
+  # Failover: an ordered list of directory addresses, tried in order on a
+  # connection or StartTLS failure. Mutually exclusive with url above.
+  # urls: [ldaps://dc1.example:636, ldaps://dc2.example:636]
+
+  # Active Directory nested group membership (LDAP_MATCHING_RULE_IN_CHAIN).
+  # false (default) does a flat groupOfNames/member search.
+  nested_groups: true
+  group_cache_ttl: 5m  # default
+
+  # Lockout a (user, IP) pair after max_failures failed logins within
+  # failure_window, for lockout_for. Defaults shown.
+  max_failures: 5
+  failure_window: 15m
+  lockout_for: 15m

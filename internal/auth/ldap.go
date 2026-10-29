@@ -4,18 +4,30 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
 
+// adMatchingRuleInChain is the AD-specific OID that makes a group search
+// resolve nested membership (LDAP_MATCHING_RULE_IN_CHAIN), instead of only
+// direct members.
+const adMatchingRuleInChain = "1.2.840.113556.1.4.1941"
+
 // LDAPConfig configures a search-then-bind directory. BindPassword and the
 // password passed to Authenticate are never logged.
 type LDAPConfig struct {
-	URL          string
-	StartTLS     bool
+	// URL is a single directory address. URLs, if non-empty, takes
+	// precedence and is tried in order on a connection or StartTLS failure.
+	URL      string
+	URLs     []string
+	StartTLS bool
+
 	BindDN       string
 	BindPassword string
 	BaseDN       string
@@ -24,6 +36,13 @@ type LDAPConfig struct {
 	GroupsBaseDN           string
 	CAFile                 string
 	InsecureAllowPlaintext bool
+
+	// NestedGroups resolves Active Directory nested group membership via
+	// adMatchingRuleInChain instead of a flat groupOfNames search.
+	NestedGroups bool
+	// GroupCacheTTL caches a user's resolved groups for this long. Zero
+	// disables the cache.
+	GroupCacheTTL time.Duration
 }
 
 // ldapConn is the subset of *ldap.Conn that Authenticate needs; tests
@@ -34,21 +53,44 @@ type ldapConn interface {
 	Close() error
 }
 
+// groupCacheEntry is a user's resolved groups, valid until expiry.
+type groupCacheEntry struct {
+	groups []string
+	expiry time.Time
+}
+
 // LDAP authenticates users against a directory with search-then-bind:
 // bind as a read-only account, search for the user's DN, then bind as the
 // user to check their password.
 type LDAP struct {
 	cfg       LDAPConfig
 	tlsConfig *tls.Config
-	dial      func() (ldapConn, error)
+	// dial connects to the directory, trying every URL in cfg.urls() in
+	// order; tests may replace it entirely to skip real dialing.
+	dial func() (ldapConn, error)
+	// dialURL connects to a single address; the failover loop behind dial
+	// calls it once per URL. Tests override this to exercise failover
+	// without replacing the loop itself.
+	dialURL func(addr string) (ldapConn, error)
+	// now is time.Now, overridable in tests for deterministic cache expiry.
+	now func() time.Time
+
+	groupCacheMu sync.Mutex
+	groupCache   map[string]groupCacheEntry
 }
 
 // NewLDAP validates cfg and prepares an LDAP ready to authenticate. It
 // refuses to start against a plaintext ldap:// URL unless StartTLS or
 // InsecureAllowPlaintext is set.
 func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
-	if strings.HasPrefix(cfg.URL, "ldap://") && !cfg.StartTLS && !cfg.InsecureAllowPlaintext {
-		return nil, fmt.Errorf("ldap: plaintext url requires start_tls or insecure_allow_plaintext")
+	urls := cfg.URLs
+	if len(urls) == 0 {
+		urls = []string{cfg.URL}
+	}
+	for _, u := range urls {
+		if strings.HasPrefix(u, "ldap://") && !cfg.StartTLS && !cfg.InsecureAllowPlaintext {
+			return nil, fmt.Errorf("ldap: plaintext url requires start_tls or insecure_allow_plaintext")
+		}
 	}
 
 	tlsConfig := &tls.Config{InsecureSkipVerify: false}
@@ -64,13 +106,22 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 		tlsConfig.RootCAs = pool
 	}
 
-	l := &LDAP{cfg: cfg, tlsConfig: tlsConfig}
-	l.dial = l.dialReal
+	l := &LDAP{cfg: cfg, tlsConfig: tlsConfig, now: time.Now}
+	l.dialURL = l.dialOneReal
+	l.dial = l.dialFailover
 	return l, nil
 }
 
-func (l *LDAP) dialReal() (ldapConn, error) {
-	conn, err := ldap.DialURL(l.cfg.URL, ldap.DialWithTLSConfig(l.tlsConfig))
+// urls returns the ordered list of directory addresses to try.
+func (l *LDAP) urls() []string {
+	if len(l.cfg.URLs) > 0 {
+		return l.cfg.URLs
+	}
+	return []string{l.cfg.URL}
+}
+
+func (l *LDAP) dialOneReal(addr string) (ldapConn, error) {
+	conn, err := ldap.DialURL(addr, ldap.DialWithTLSConfig(l.tlsConfig))
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +132,55 @@ func (l *LDAP) dialReal() (ldapConn, error) {
 		}
 	}
 	return conn, nil
+}
+
+// dialFailover tries every configured URL in order, returning the first
+// successful connection. A rejected user bind is not a failover trigger —
+// only Authenticate's dial/connect step goes through this loop.
+func (l *LDAP) dialFailover() (ldapConn, error) {
+	var errs []error
+	for _, addr := range l.urls() {
+		conn, err := l.dialURL(addr)
+		if err == nil {
+			return conn, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", addr, err))
+	}
+	return nil, fmt.Errorf("ldap: connect: %w", errors.Join(errs...))
+}
+
+func (l *LDAP) cachedGroups(key string) ([]string, bool) {
+	l.groupCacheMu.Lock()
+	defer l.groupCacheMu.Unlock()
+	entry, ok := l.groupCache[key]
+	if !ok {
+		return nil, false
+	}
+	if l.now().After(entry.expiry) {
+		delete(l.groupCache, key)
+		return nil, false
+	}
+	return entry.groups, true
+}
+
+func (l *LDAP) storeGroups(key string, groups []string) {
+	l.groupCacheMu.Lock()
+	defer l.groupCacheMu.Unlock()
+	if l.groupCache == nil {
+		l.groupCache = make(map[string]groupCacheEntry)
+	}
+	l.groupCache[key] = groupCacheEntry{groups: groups, expiry: l.now().Add(l.cfg.GroupCacheTTL)}
+}
+
+// groupFilter builds the group-membership search filter for userDN: AD
+// nested resolution when NestedGroups is set, otherwise a flat
+// groupOfNames/member search (J1-03 behavior, unchanged for OpenLDAP).
+func (l *LDAP) groupFilter(userDN string) string {
+	escaped := ldap.EscapeFilter(userDN)
+	if l.cfg.NestedGroups {
+		return fmt.Sprintf("(&(objectClass=group)(member:%s:=%s))", adMatchingRuleInChain, escaped)
+	}
+	return fmt.Sprintf("(&(objectClass=groupOfNames)(member=%s))", escaped)
 }
 
 // Authenticate runs search-then-bind for username/password and returns the
@@ -127,17 +227,23 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Id
 		return nil, fmt.Errorf("ldap: password rejected")
 	}
 
+	cacheKey := strings.ToLower(username)
+	if l.cfg.GroupCacheTTL > 0 {
+		if groups, ok := l.cachedGroups(cacheKey); ok {
+			return &Identity{Subject: username, Email: email, Groups: groups}, nil
+		}
+	}
+
 	// Re-bind as the read-only account: the user bind above replaced the
 	// connection's authenticated identity, and group search must not run as
 	// the user (who may lack read access to the groups tree).
 	if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
 		return nil, fmt.Errorf("ldap: readonly re-bind: %w", err)
 	}
-	groupFilter := fmt.Sprintf("(&(objectClass=groupOfNames)(member=%s))", ldap.EscapeFilter(userDN))
 	groupsReq := ldap.NewSearchRequest(
 		l.cfg.GroupsBaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		groupFilter,
+		l.groupFilter(userDN),
 		[]string{"cn"},
 		nil,
 	)
@@ -150,6 +256,9 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Id
 		if cn := e.GetAttributeValue("cn"); cn != "" {
 			groups = append(groups, cn)
 		}
+	}
+	if l.cfg.GroupCacheTTL > 0 {
+		l.storeGroups(cacheKey, groups)
 	}
 
 	return &Identity{Subject: username, Email: email, Groups: groups}, nil

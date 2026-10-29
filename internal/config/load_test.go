@@ -355,6 +355,130 @@ ldap:
 	}
 }
 
+func TestLoadLDAPDefaults(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LDAP.GroupCacheTTL != "5m" || cfg.LDAP.FailureWindow != "15m" || cfg.LDAP.LockoutFor != "15m" || cfg.LDAP.MaxFailures != 5 {
+		t.Fatalf("defaults = %+v", cfg.LDAP)
+	}
+	if cfg.LDAP.NestedGroups {
+		t.Fatal("nested_groups should default to false")
+	}
+}
+
+func TestLoadLDAPURLsFailover(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  urls: [ldaps://dc1.example:636, ldaps://dc2.example:636]
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.LDAP.URLs) != 2 {
+		t.Fatalf("urls = %v", cfg.LDAP.URLs)
+	}
+}
+
+func TestLoadLDAPRejectsURLAndURLsTogether(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://dc1.example:636
+  urls: [ldaps://dc1.example:636, ldaps://dc2.example:636]
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "either ldap.url or ldap.urls") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadLDAPRejectsInvalidDurations(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	for _, field := range []string{"group_cache_ttl: not-a-duration", "failure_window: 0s", "lockout_for: -5m"} {
+		path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+  `+field+`
+`)
+		_, _, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), "positive Go duration") {
+			t.Fatalf("field %q: err = %v", field, err)
+		}
+	}
+}
+
+func TestLoadLDAPRejectsMaxFailuresBelowOne(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+  max_failures: -1
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "max_failures") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestLoadMalformedReference(t *testing.T) {
 	for _, body := range []string{
 		`api_key: "${env:}"`,

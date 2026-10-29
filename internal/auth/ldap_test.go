@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -217,4 +218,155 @@ func (f *filterCapturingConn) Search(req *ldap.SearchRequest) (*ldap.SearchResul
 		*f.captured = req.Filter
 	}
 	return f.fakeConn.Search(req)
+}
+
+// groupSearchConn wraps fakeConn to record the filter and call count of
+// every groups-tree search, leaving the user-tree search untouched.
+type groupSearchConn struct {
+	*fakeConn
+	groupFilters []string
+}
+
+func (f *groupSearchConn) Search(req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+	if req.BaseDN == groupsBaseDN {
+		f.groupFilters = append(f.groupFilters, req.Filter)
+	}
+	return f.fakeConn.Search(req)
+}
+
+func newTestLDAPWithConfig(t *testing.T, cfg LDAPConfig, conn *fakeConn) *LDAP {
+	t.Helper()
+	cfg.URL = "ldaps://directory.example:636"
+	cfg.BindDN = readonlyDN
+	cfg.BindPassword = "readonly-secret"
+	cfg.BaseDN = baseDN
+	cfg.UserFilter = "(uid=%s)"
+	cfg.GroupsBaseDN = groupsBaseDN
+	l, err := NewLDAP(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.readonlyDN = readonlyDN
+	conn.readonlyPassword = "readonly-secret"
+	return l
+}
+
+func TestAuthenticateFlatGroupFilterByDefault(t *testing.T) {
+	userDN := "uid=alice," + baseDN
+	inner := &fakeConn{userDN: userDN, userPassword: "pw", userEntries: []*ldap.Entry{ldap.NewEntry(userDN, nil)}}
+	spy := &groupSearchConn{fakeConn: inner}
+	l := newTestLDAPWithConfig(t, LDAPConfig{}, inner)
+	l.dial = func() (ldapConn, error) { return spy, nil }
+
+	if _, err := l.Authenticate(context.Background(), "alice", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.groupFilters) != 1 || !strings.Contains(spy.groupFilters[0], "groupOfNames") {
+		t.Fatalf("group filters = %v", spy.groupFilters)
+	}
+}
+
+func TestAuthenticateNestedGroupFilter(t *testing.T) {
+	userDN := "uid=alice," + baseDN
+	inner := &fakeConn{userDN: userDN, userPassword: "pw", userEntries: []*ldap.Entry{ldap.NewEntry(userDN, nil)}}
+	spy := &groupSearchConn{fakeConn: inner}
+	l := newTestLDAPWithConfig(t, LDAPConfig{NestedGroups: true}, inner)
+	l.dial = func() (ldapConn, error) { return spy, nil }
+
+	if _, err := l.Authenticate(context.Background(), "alice", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.groupFilters) != 1 || !strings.Contains(spy.groupFilters[0], adMatchingRuleInChain) {
+		t.Fatalf("group filters = %v", spy.groupFilters)
+	}
+}
+
+func TestAuthenticateGroupCacheSkipsRepeatSearch(t *testing.T) {
+	userDN := "uid=alice," + baseDN
+	inner := &fakeConn{
+		userDN: userDN, userPassword: "pw",
+		userEntries:  []*ldap.Entry{ldap.NewEntry(userDN, nil)},
+		groupEntries: []*ldap.Entry{ldap.NewEntry("cn=g1,"+groupsBaseDN, map[string][]string{"cn": {"g1"}})},
+	}
+	spy := &groupSearchConn{fakeConn: inner}
+	l := newTestLDAPWithConfig(t, LDAPConfig{GroupCacheTTL: time.Minute}, inner)
+	l.dial = func() (ldapConn, error) { return spy, nil }
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l.now = func() time.Time { return clock }
+
+	first, err := l.Authenticate(context.Background(), "alice", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.groupFilters) != 1 {
+		t.Fatalf("expected 1 search, got %d", len(spy.groupFilters))
+	}
+
+	second, err := l.Authenticate(context.Background(), "alice", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.groupFilters) != 1 {
+		t.Fatalf("expected cache hit (still 1 search), got %d", len(spy.groupFilters))
+	}
+	if len(second.Groups) != 1 || second.Groups[0] != first.Groups[0] {
+		t.Fatalf("cached groups = %v want %v", second.Groups, first.Groups)
+	}
+
+	clock = clock.Add(2 * time.Minute)
+	if _, err := l.Authenticate(context.Background(), "alice", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.groupFilters) != 2 {
+		t.Fatalf("expected a fresh search after TTL expiry, got %d", len(spy.groupFilters))
+	}
+}
+
+// failoverConn is a minimal ldapConn for the failover test: no real
+// directory behavior needed, Authenticate itself isn't exercised, only
+// LDAP.dial (the failover loop) via dialURL.
+type failoverConn struct{ addr string }
+
+func (c *failoverConn) Bind(string, string) error { return nil }
+func (c *failoverConn) Search(*ldap.SearchRequest) (*ldap.SearchResult, error) {
+	return &ldap.SearchResult{}, nil
+}
+func (c *failoverConn) Close() error { return nil }
+
+func TestDialFailoverTriesNextURLOnFailure(t *testing.T) {
+	l, err := NewLDAP(LDAPConfig{URLs: []string{"ldaps://dc1.example:636", "ldaps://dc2.example:636"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tried []string
+	l.dialURL = func(addr string) (ldapConn, error) {
+		tried = append(tried, addr)
+		if addr == "ldaps://dc1.example:636" {
+			return nil, fmt.Errorf("connection refused")
+		}
+		return &failoverConn{addr: addr}, nil
+	}
+
+	conn, err := l.dial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := conn.(*failoverConn).addr; got != "ldaps://dc2.example:636" {
+		t.Fatalf("connected to %q, want dc2", got)
+	}
+	if len(tried) != 2 {
+		t.Fatalf("tried = %v", tried)
+	}
+}
+
+func TestDialFailoverFailsWhenAllURLsFail(t *testing.T) {
+	l, err := NewLDAP(LDAPConfig{URLs: []string{"ldaps://dc1.example:636", "ldaps://dc2.example:636"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.dialURL = func(addr string) (ldapConn, error) { return nil, fmt.Errorf("connection refused") }
+
+	if _, err := l.dial(); err == nil {
+		t.Fatal("expected error when every URL fails")
+	}
 }

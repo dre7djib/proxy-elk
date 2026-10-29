@@ -31,11 +31,15 @@ type OIDC struct {
 }
 
 // LDAP is the directory used for search-then-bind authentication.
-// BindPassword comes from a secret reference. Empty URL means LDAP login is
-// disabled.
+// BindPassword comes from a secret reference. Empty URL and URLs means LDAP
+// login is disabled.
 type LDAP struct {
-	URL          string `yaml:"url" json:"url"`
-	StartTLS     bool   `yaml:"start_tls" json:"start_tls"`
+	// URL is a single directory address. Mutually exclusive with URLs; use
+	// URLs instead to list several addresses for failover.
+	URL      string   `yaml:"url" json:"url"`
+	URLs     []string `yaml:"urls" json:"urls"`
+	StartTLS bool     `yaml:"start_tls" json:"start_tls"`
+
 	BindDN       string `yaml:"bind_dn" json:"bind_dn"`
 	BindPassword string `yaml:"bind_password" json:"bind_password"`
 	BaseDN       string `yaml:"base_dn" json:"base_dn"`
@@ -46,6 +50,20 @@ type LDAP struct {
 	CAFile       string `yaml:"ca_file" json:"ca_file"`
 	// InsecureAllowPlaintext allows ldap:// without start_tls. Dev only.
 	InsecureAllowPlaintext bool `yaml:"insecure_allow_plaintext" json:"insecure_allow_plaintext"`
+
+	// NestedGroups resolves Active Directory nested group membership via the
+	// LDAP_MATCHING_RULE_IN_CHAIN OID instead of a flat groupOfNames search.
+	NestedGroups bool `yaml:"nested_groups" json:"nested_groups"`
+	// GroupCacheTTL is a Go duration string (e.g. "5m"). Defaults to 5m.
+	GroupCacheTTL string `yaml:"group_cache_ttl" json:"group_cache_ttl"`
+
+	// MaxFailures is the number of failed logins for a (user, IP) pair
+	// within FailureWindow before it is locked out for LockoutFor. Defaults
+	// to 5.
+	MaxFailures int `yaml:"max_failures" json:"max_failures"`
+	// FailureWindow and LockoutFor are Go duration strings. Default to 15m.
+	FailureWindow string `yaml:"failure_window" json:"failure_window"`
+	LockoutFor    string `yaml:"lockout_for" json:"lockout_for"`
 }
 
 // Warning is a non-fatal configuration problem, such as a world-readable secret file.
