@@ -10,6 +10,7 @@ type Method string
 const (
 	MethodOIDC Method = "oidc"
 	MethodLDAP Method = "ldap"
+	MethodJWT  Method = "jwt"
 )
 
 // PasswordAuthenticator authenticates a username/password pair into an

@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -77,64 +76,13 @@ func Discover(ctx context.Context, cfg OIDCConfig) (*Provider, error) {
 	return p, nil
 }
 
-type jwkSet struct {
-	Keys []struct {
-		Kty string `json:"kty"`
-		Kid string `json:"kid"`
-		N   string `json:"n"`
-		E   string `json:"e"`
-	} `json:"keys"`
-}
-
 func (p *Provider) refreshKeys(ctx context.Context) error {
-	jwks, err := fetchJSON[jwkSet](ctx, p.http, p.meta.JWKSURI)
+	keys, err := fetchJWKS(ctx, p.http, p.meta.JWKSURI)
 	if err != nil {
 		return fmt.Errorf("oidc jwks: %w", err)
 	}
-
-	keys := make(map[string]*rsa.PublicKey, len(jwks.Keys))
-	for _, k := range jwks.Keys {
-		if k.Kty != "RSA" || k.Kid == "" {
-			continue
-		}
-		nBytes, err := base64.RawURLEncoding.DecodeString(k.N)
-		if err != nil {
-			continue
-		}
-		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
-		if err != nil {
-			continue
-		}
-		keys[k.Kid] = &rsa.PublicKey{
-			N: new(big.Int).SetBytes(nBytes),
-			E: int(new(big.Int).SetBytes(eBytes).Int64()),
-		}
-	}
-	if len(keys) == 0 {
-		return fmt.Errorf("oidc jwks: no usable RSA key")
-	}
 	p.keys = keys
 	return nil
-}
-
-func fetchJSON[T any](ctx context.Context, client *http.Client, u string) (*T, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: status %d", u, resp.StatusCode)
-	}
-	var out T
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 // AuthCodeURL builds the authorization endpoint URL for an authorization
@@ -282,36 +230,6 @@ func (p *Provider) verifyIDToken(raw, wantNonce string) (Identity, error) {
 		Email:   claims.Email,
 		Groups:  stringSlice(raws[p.cfg.GroupsClaim]),
 	}, nil
-}
-
-func audienceContains(raw json.RawMessage, clientID string) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var single string
-	if err := json.Unmarshal(raw, &single); err == nil {
-		return single == clientID
-	}
-	var list []string
-	if err := json.Unmarshal(raw, &list); err == nil {
-		for _, a := range list {
-			if a == clientID {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func stringSlice(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	var list []string
-	if err := json.Unmarshal(raw, &list); err == nil {
-		return list
-	}
-	return nil
 }
 
 // NewState returns a random URL-safe string suitable for the state and nonce

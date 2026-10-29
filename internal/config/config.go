@@ -7,6 +7,7 @@ type Config struct {
 	Elasticsearch Elasticsearch `yaml:"elasticsearch" json:"elasticsearch"`
 	OIDC          OIDC          `yaml:"oidc" json:"oidc"`
 	LDAP          LDAP          `yaml:"ldap" json:"ldap"`
+	JWT           JWT           `yaml:"jwt" json:"jwt"`
 	Session       Session       `yaml:"session" json:"session"`
 
 	secrets secretSet
@@ -65,6 +66,18 @@ type LDAP struct {
 	// FailureWindow and LockoutFor are Go duration strings. Default to 15m.
 	FailureWindow string `yaml:"failure_window" json:"failure_window"`
 	LockoutFor    string `yaml:"lockout_for" json:"lockout_for"`
+}
+
+// JWT configures verification of machine-to-machine Bearer tokens (F13):
+// the proxy checks a JWT an external IdP already issued, it never emits
+// one. Empty Issuer means JWT Bearer auth is disabled; no session cookie
+// is involved.
+type JWT struct {
+	Issuer   string `yaml:"issuer" json:"issuer"`
+	Audience string `yaml:"audience" json:"audience"`
+	JWKSURL  string `yaml:"jwks_url" json:"jwks_url"`
+	// GroupsClaim is the token claim holding the caller's groups. Defaults to "groups".
+	GroupsClaim string `yaml:"groups_claim" json:"groups_claim"`
 }
 
 // Session configures the HMAC-signed login session shared by OIDC and

@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"proxy/internal/auth"
 )
@@ -16,22 +17,32 @@ type meResponse struct {
 	Method  string   `json:"method"`
 }
 
-// HandleMe returns a handler reporting the caller's session identity. A
-// missing, tampered or expired session (or sessions being nil, i.e.
-// disabled) gets a bare 401.
-func HandleMe(sessions *auth.Sessions) http.HandlerFunc {
+// HandleMe returns a handler reporting the caller's identity, from either
+// the session cookie (human logins) or a Bearer JWT (M2M, F13). A missing,
+// tampered or expired session (or sessions being nil, i.e. disabled), with
+// no valid Bearer either, gets a bare 401.
+func HandleMe(sessions *auth.Sessions, jwt *auth.JWT) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, method, err := sessions.FromRequest(r)
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if id, method, err := sessions.FromRequest(r); err == nil {
+			writeMe(w, id, method)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(meResponse{
-			Subject: id.Subject,
-			Email:   id.Email,
-			Groups:  id.Groups,
-			Method:  string(method),
-		})
+		if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && jwt != nil {
+			if id, err := jwt.AuthenticateBearer(r.Context(), bearer); err == nil {
+				writeMe(w, id, auth.MethodJWT)
+				return
+			}
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}
+}
+
+func writeMe(w http.ResponseWriter, id *auth.Identity, method auth.Method) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(meResponse{
+		Subject: id.Subject,
+		Email:   id.Email,
+		Groups:  id.Groups,
+		Method:  string(method),
+	})
 }

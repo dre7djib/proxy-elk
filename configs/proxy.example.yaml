@@ -48,6 +48,15 @@ ldap:
   failure_window: 15m
   lockout_for: 15m
 
+# Machine-to-machine access (F13): the proxy verifies a Bearer JWT an
+# external IdP already issued; it never mints one. Omit the jwt section
+# entirely to disable it. No session cookie is involved for these callers.
+jwt:
+  issuer: https://idp.example/realms/demo
+  audience: proxy-m2m
+  jwks_url: https://idp.example/realms/demo/protocol/openid-connect/certs
+  # groups_claim: groups
+
 # Required as soon as oidc or ldap is active: the login session (shared by
 # both) is an HMAC-signed cookie, not a server-side store.
 session:

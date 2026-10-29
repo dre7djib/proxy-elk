@@ -632,6 +632,55 @@ elasticsearch:
 	}
 }
 
+func TestLoadJWTRequiresAudience(t *testing.T) {
+	t.Setenv("ES_API_KEY", "secret")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+jwt:
+  issuer: https://idp.example
+  jwks_url: https://idp.example/certs
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "jwt.audience") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadJWTRequiresJWKSURL(t *testing.T) {
+	t.Setenv("ES_API_KEY", "secret")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+jwt:
+  issuer: https://idp.example
+  audience: proxy-m2m
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "jwt.jwks_url") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadJWTOptionalWithoutIssuer(t *testing.T) {
+	t.Setenv("ES_API_KEY", "secret")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JWT.Issuer != "" {
+		t.Fatalf("jwt = %+v", cfg.JWT)
+	}
+}
+
 func TestLoadMalformedReference(t *testing.T) {
 	for _, body := range []string{
 		`api_key: "${env:}"`,

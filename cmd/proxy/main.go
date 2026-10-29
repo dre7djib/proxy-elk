@@ -95,11 +95,25 @@ func buildMux(cfg *config.Config) (*http.ServeMux, error) {
 		})
 	}
 
+	var jwtVerifier *auth.JWT
+	if cfg.JWT.Issuer != "" {
+		var err error
+		jwtVerifier, err = auth.NewJWT(context.Background(), auth.JWTConfig{
+			Issuer:      cfg.JWT.Issuer,
+			Audience:    cfg.JWT.Audience,
+			JWKSURL:     cfg.JWT.JWKSURL,
+			GroupsClaim: cfg.JWT.GroupsClaim,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("jwt: %w", err)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "access denied", http.StatusForbidden)
 	})
-	mux.HandleFunc("/auth/me", proxy.HandleMe(sessions))
+	mux.HandleFunc("/auth/me", proxy.HandleMe(sessions, jwtVerifier))
 
 	if oidcActive {
 		provider, err := auth.Discover(context.Background(), auth.OIDCConfig{

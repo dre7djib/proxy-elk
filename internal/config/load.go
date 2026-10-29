@@ -117,6 +117,15 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 	}
 
+	if c.JWT.Issuer != "" {
+		if c.JWT.Audience == "" {
+			return fmt.Errorf("jwt.audience is required when jwt.issuer is set")
+		}
+		if c.JWT.JWKSURL == "" {
+			return fmt.Errorf("jwt.jwks_url is required when jwt.issuer is set")
+		}
+	}
+
 	if oidcActive || ldapActive {
 		if _, ok := secrets.paths["session.secret"]; !ok || c.Session.Secret == "" {
 			return fmt.Errorf("session.secret must be ${env:NAME} or ${file:PATH}")

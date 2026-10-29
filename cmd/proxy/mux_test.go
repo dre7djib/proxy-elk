@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"proxy/internal/config"
 )
@@ -163,5 +166,71 @@ session:
 	built.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/callback", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("/auth/callback status = %d", rec.Code)
+	}
+}
+
+func TestBuildMuxWiresJWTBearerOnAuthMe(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const kid = "k1"
+	jwksSrv := http.NewServeMux()
+	jwksSrv.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		n := base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1})
+		json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "kid": kid, "n": n, "e": e}}})
+	})
+	srv := httptest.NewServer(jwksSrv)
+	defer srv.Close()
+
+	cfg, _, err := config.Load(writeTestConfig(`
+listen: ":0"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+jwt:
+  issuer: https://idp.example
+  audience: proxy-m2m
+  jwks_url: ` + srv.URL + `/jwks
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	built, err := buildMux(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No route to mint a JWT exists: the proxy only ever verifies one an
+	// external IdP already issued (guard against F78 confusion).
+	rec := httptest.NewRecorder()
+	built.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/auth/jwt", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("/auth/jwt status = %d, want the catch-all 403 (no such route)", rec.Code)
+	}
+
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": kid, "typ": "JWT"})
+	payload, _ := json.Marshal(map[string]any{
+		"iss": "https://idp.example", "sub": "svc-1", "aud": "proxy-m2m",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	signingInput := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	hash := sha256.Sum256([]byte(signingInput))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	built.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/auth/me status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
