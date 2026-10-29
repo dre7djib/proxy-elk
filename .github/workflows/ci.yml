@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
+  pull_request: {}
 
 permissions:
   contents: read
@@ -38,4 +38,4 @@ jobs:
 
       - name: No Go module yet
         if: steps.gomod.outputs.present == 'false'
-        run: echo "No go.mod: nothing to build for now."
+        run: echo "No go.mod, nothing to build for now."
