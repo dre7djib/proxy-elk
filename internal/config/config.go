@@ -6,6 +6,7 @@ type Config struct {
 	Listen        string        `yaml:"listen" json:"listen"`
 	Elasticsearch Elasticsearch `yaml:"elasticsearch" json:"elasticsearch"`
 	OIDC          OIDC          `yaml:"oidc" json:"oidc"`
+	LDAP          LDAP          `yaml:"ldap" json:"ldap"`
 
 	secrets secretSet
 }
@@ -27,6 +28,24 @@ type OIDC struct {
 	Scopes       []string `yaml:"scopes" json:"scopes"`
 	// GroupsClaim is the ID token claim holding the user's groups. Defaults to "groups".
 	GroupsClaim string `yaml:"groups_claim" json:"groups_claim"`
+}
+
+// LDAP is the directory used for search-then-bind authentication.
+// BindPassword comes from a secret reference. Empty URL means LDAP login is
+// disabled.
+type LDAP struct {
+	URL          string `yaml:"url" json:"url"`
+	StartTLS     bool   `yaml:"start_tls" json:"start_tls"`
+	BindDN       string `yaml:"bind_dn" json:"bind_dn"`
+	BindPassword string `yaml:"bind_password" json:"bind_password"`
+	BaseDN       string `yaml:"base_dn" json:"base_dn"`
+	// UserFilter is the search filter used to find the user's DN. It must
+	// contain exactly one %s, replaced with the escaped username.
+	UserFilter   string `yaml:"user_filter" json:"user_filter"`
+	GroupsBaseDN string `yaml:"groups_base_dn" json:"groups_base_dn"`
+	CAFile       string `yaml:"ca_file" json:"ca_file"`
+	// InsecureAllowPlaintext allows ldap:// without start_tls. Dev only.
+	InsecureAllowPlaintext bool `yaml:"insecure_allow_plaintext" json:"insecure_allow_plaintext"`
 }
 
 // Warning is a non-fatal configuration problem, such as a world-readable secret file.

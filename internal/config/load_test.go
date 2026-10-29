@@ -219,6 +219,142 @@ oidc:
 	}
 }
 
+func TestLoadLDAPRejectsPlaintextWithoutStartTLS(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldap://ldap.example:389
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "plaintext") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadLDAPAllowsStartTLS(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldap://ldap.example:389
+  start_tls: true
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	if _, _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadLDAPAllowsExplicitPlaintext(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldap://ldap.example:389
+  insecure_allow_plaintext: true
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	if _, _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadLDAPAcceptsLDAPS(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LDAP.BindPassword != "x" {
+		t.Fatalf("bind password = %q", cfg.LDAP.BindPassword)
+	}
+}
+
+func TestLoadLDAPRequiresBindPasswordSecret(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "plaintext"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "ldap.bind_password") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadLDAPRequiresSingleUserFilterPlaceholder(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	for _, filter := range []string{"(uid=fixed)", "(uid=%s)(cn=%s)"} {
+		path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "`+filter+`"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+`)
+		_, _, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), "user_filter") {
+			t.Fatalf("filter %q: err = %v", filter, err)
+		}
+	}
+}
+
 func TestLoadMalformedReference(t *testing.T) {
 	for _, body := range []string{
 		`api_key: "${env:}"`,
@@ -242,6 +378,7 @@ func TestExampleConfig(t *testing.T) {
 	const secret = "example-secret-value"
 	t.Setenv("ES_API_KEY", secret)
 	t.Setenv("OIDC_CLIENT_SECRET", "example-oidc-secret")
+	t.Setenv("LDAP_BIND_PASSWORD", "example-ldap-secret")
 	cfg, _, err := Load("../../configs/proxy.example.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +388,9 @@ func TestExampleConfig(t *testing.T) {
 	}
 	if cfg.OIDC.ClientSecret != "example-oidc-secret" {
 		t.Fatalf("oidc client secret = %q", cfg.OIDC.ClientSecret)
+	}
+	if cfg.LDAP.BindPassword != "example-ldap-secret" {
+		t.Fatalf("ldap bind password = %q", cfg.LDAP.BindPassword)
 	}
 	if strings.Contains(cfg.Mask(secret), secret) {
 		t.Fatal("mask leaked example secret")

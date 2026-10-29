@@ -16,3 +16,19 @@ oidc:
   redirect_url: https://proxy.example/callback
   scopes: [openid, email, profile, groups]
   groups_claim: groups
+
+# Omit the ldap section entirely to disable LDAP login.
+ldap:
+  url: ldaps://ldap.example:636
+  # Plaintext ldap:// requires start_tls: true, or insecure_allow_plaintext
+  # (dev only) to start without either.
+  # url: ldap://ldap.example:389
+  # start_tls: true
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  # Active Directory: user_filter: "(sAMAccountName=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+  ca_file: /etc/proxy/ldap-ca.pem
+  # insecure_allow_plaintext: true   # dev only

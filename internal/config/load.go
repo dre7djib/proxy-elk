@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +51,26 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 		if _, ok := secrets.paths["oidc.client_secret"]; !ok || c.OIDC.ClientSecret == "" {
 			return fmt.Errorf("oidc.client_secret must be ${env:NAME} or ${file:PATH}")
+		}
+	}
+	if c.LDAP.URL != "" {
+		if c.LDAP.BindDN == "" {
+			return fmt.Errorf("ldap.bind_dn is required when ldap.url is set")
+		}
+		if _, ok := secrets.paths["ldap.bind_password"]; !ok || c.LDAP.BindPassword == "" {
+			return fmt.Errorf("ldap.bind_password must be ${env:NAME} or ${file:PATH}")
+		}
+		if c.LDAP.BaseDN == "" {
+			return fmt.Errorf("ldap.base_dn is required when ldap.url is set")
+		}
+		if strings.Count(c.LDAP.UserFilter, "%s") != 1 {
+			return fmt.Errorf("ldap.user_filter must contain exactly one %%s")
+		}
+		if c.LDAP.GroupsBaseDN == "" {
+			return fmt.Errorf("ldap.groups_base_dn is required when ldap.url is set")
+		}
+		if strings.HasPrefix(c.LDAP.URL, "ldap://") && !c.LDAP.StartTLS && !c.LDAP.InsecureAllowPlaintext {
+			return fmt.Errorf("ldap.url is plaintext: use ldaps://, set ldap.start_tls, or ldap.insecure_allow_plaintext for dev")
 		}
 	}
 	return nil
