@@ -2,7 +2,7 @@
 
 Authentication and authorization proxy in front of self-hosted Elasticsearch, with an AI assistant integrated into Kibana through a minimal plugin. Open source (Apache-2.0).
 
-> **Status: design.** The project is at the technical spike stage. Nothing is production-ready yet.
+> **Status: spike closed.** SP-01 to SP-08 are done (see `spike/` and the spike plan). Nothing is production-ready yet. J1 is next.
 
 ## Why
 

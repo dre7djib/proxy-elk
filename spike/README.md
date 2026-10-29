@@ -1,4 +1,4 @@
-# Spike SP-01 à SP-07 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL + jeton court + licence Basic
+# Spike SP-01 à SP-08 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL + jeton court + licence Basic
 
 Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). Pas de tests, pas de belle architecture : le but est de lever un risque précis.
 
@@ -15,6 +15,8 @@ Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%
 **Périmètre de SP-06** : jeton court d'identité (JWT RS256, F78-F82) entre un plugin Kibana et un moteur factice, via un nouveau service `engine` ([`spike/engine/`](engine/)) et une route de minting dans le proxy (`POST /_spike/identity-token`, [`spike/proxy/main.go`](proxy/main.go)). La variante retenue en premier par le plan du spike — demander le jeton via Elasticsearch, avec la session de l'utilisateur — **fonctionne, vérifié par exécution réelle, de bout en bout, plugin Kibana réellement compilé et chargé compris** : le plugin ([`spike/kibana-plugin/`](kibana-plugin/)) appelle le proxy via `asCurrentUser`, le proxy émet un jeton portant l'identité et les groupes LDAP d'alice, et le moteur en vérifie signature, expiration et destinataire, acceptant le bon jeton et refusant quatre vecteurs invalides. Détail dans [SP-06 Plugin Kibana minimal + jeton court](#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice) plus bas.
 
 **Périmètre de SP-07** : constat écrit, aucun changement de code. Spaces, rôles et feature controls `base`/`feature` tiennent sous la licence **Basic** auto-générée ; le proxy ne réécrit pas `GET /_license` ni `GET /_xpack`, et une fonction Platinum (field-level security) est refusée de la même façon en direct et à travers le proxy. Détail dans [SP-07 Licence Kibana vs proxy](#sp-07-licence-kibana-vs-proxy) plus bas.
+
+**Périmètre de SP-08** : spike clos. Compte rendu dans [le plan](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md#compte-rendu-sp-08) ; besoins F2, F27, F40, F68, F70–F75, F82 mis à jour. **Ce docker-compose est la base de F68** (J1-13) : le conserver, ne pas le jeter.
 
 ## Démarrer
 
