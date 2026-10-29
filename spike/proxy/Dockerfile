@@ -1,8 +1,8 @@
-# Proxy jetable du spike SP-02/SP-03. Image minimale.
-# `go mod tidy` résout et télécharge github.com/go-ldap/ldap/v3 (F4, SP-03) et
-# écrit go.sum à la construction : pas de go.sum committé, nécessite un accès
-# réseau au moment du `docker compose build` (acceptable pour un spike,
-# non reproductible à l'octet près).
+# Disposable proxy for the SP-02/SP-03 spike. Minimal image.
+# `go mod tidy` resolves and downloads github.com/go-ldap/ldap/v3 (F4, SP-03) and
+# writes go.sum at build time: no committed go.sum, requires network
+# access at `docker compose build` time (acceptable for a spike,
+# not byte-for-byte reproducible).
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod ./

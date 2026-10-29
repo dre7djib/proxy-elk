@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# SP-05 : joue FROM, LOOKUP JOIN et ENRICH via le proxy (:9210), d'abord avec
-# elastic (capacité brute, aucune ACL), puis avec alice (chemin LDAP ->
-# run_as du proxy, SP-03/SP-04), pour répondre à F27 par l'exécution plutôt
-# que par la seule doc :
-#   1. quelles commandes ES|QL lisent d'autres index en 8.19 ?
-#   2. l'ACL native d'Elasticsearch sur l'index (ou la policy) CIBLE d'un
-#      LOOKUP JOIN / ENRICH se comporte-t-elle comme pour FROM, ou bien un
-#      utilisateur peut-il lire les données d'une autre équipe via un
-#      join/enrich malgré une ACL par ailleurs correcte (F27, F14) ?
+# SP-05: run FROM, LOOKUP JOIN and ENRICH via the proxy (:9210), first with
+# elastic (raw capability, no ACL), then with alice (LDAP path ->
+# proxy run_as, SP-03/SP-04), to answer F27 by execution rather
+# than by docs alone:
+#   1. which ES|QL commands read other indexes in 8.19?
+#   2. does Elasticsearch's native ACL on the TARGET index (or policy) of a
+#      LOOKUP JOIN / ENRICH behave like FROM, or can a
+#      user read another team's data via a
+#      join/enrich despite an otherwise correct ACL (F27, F14)?
 #
-# Prérequis : stack SP-01 à SP-04 démarrée (`docker compose up -d`) et
-# ./scripts/esql-seed.sh déjà exécuté.
+# Prerequisites: SP-01 to SP-04 stack started (`docker compose up -d`) and
+# ./scripts/esql-seed.sh already run.
 #
-# Ce script n'est volontairement PAS un gate pass/fail comme verify.sh :
-# certains résultats attendus sont justement des refus (403), et les deux
-# cas marqués "constat ouvert" ci-dessous sont la vraie question du spike,
-# pas une régression si le résultat n'est pas celui qu'on espérait. Chaque
-# cas imprime le statut HTTP, un extrait du corps, et un verdict ([OK] /
-# [CONSTAT]) ; le script ne s'arrête jamais sur un cas individuel.
+# This script is intentionally NOT a pass/fail gate like verify.sh:
+# some expected results are refusals (403), and the two
+# cases marked "open finding" below are the spike's real question,
+# not a regression if the result is not what we hoped. Each
+# case prints the HTTP status, a body snippet, and a verdict ([OK] /
+# [FINDING]); the script never stops on an individual case.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
 if [ ! -f .env ]; then
-  echo "Fichier .env manquant. Lancer : cp .env.example .env" >&2
+  echo "Missing .env file. Run: cp .env.example .env" >&2
   exit 1
 fi
 
@@ -36,9 +36,9 @@ PROXY_URL="http://127.0.0.1:9210"
 SURPRISES=0
 
 # run_query USER PASSWORD LABEL QUERY VERDICT_HINT
-# VERDICT_HINT : "200" (on attend un succès), "403" (on attend un refus),
-# ou "open" (constat ouvert : on ne sait pas encore, les deux issues sont
-# informatives, on le signale juste comme tel sans parler d'échec).
+# VERDICT_HINT: "200" (expect success), "403" (expect a refusal),
+# or "open" (open finding: we do not know yet, both outcomes are
+# informative, just flag it as such without calling it a failure).
 run_query() {
   local user="$1" password="$2" label="$3" query="$4" hint="$5"
   local body resp code
@@ -53,21 +53,21 @@ run_query() {
   local verdict
   case "${hint}" in
     200)
-      if [ "${code}" = "200" ]; then verdict="[OK] attendu 200, obtenu 200"; else verdict="[CONSTAT] attendu 200, obtenu ${code}"; fi
+      if [ "${code}" = "200" ]; then verdict="[OK] expected 200, got 200"; else verdict="[FINDING] expected 200, got ${code}"; fi
       ;;
     403)
-      if [ "${code}" != "200" ]; then verdict="[OK] attendu refus, obtenu ${code}"; else verdict="[CONSTAT] attendu un refus, obtenu 200 (donnees retournees malgre l'ACL)"; SURPRISES=$((SURPRISES + 1)); fi
+      if [ "${code}" != "200" ]; then verdict="[OK] expected refusal, got ${code}"; else verdict="[FINDING] expected a refusal, got 200 (data returned despite the ACL)"; SURPRISES=$((SURPRISES + 1)); fi
       ;;
     open)
-      verdict="[CONSTAT OUVERT] reponse ${code} -- voir le corps pour savoir si une autre equipe fuite"
+      verdict="[OPEN FINDING] response ${code} -- see the body to tell whether another team leaked"
       ;;
   esac
 
   printf '%-6s %-28s %-60s -> %3s  %s\n' "${user}" "${label}" "${query}" "${code}" "${verdict}"
-  printf '       corps: %s\n' "${snippet}"
+  printf '       body: %s\n' "${snippet}"
 }
 
-echo "== SP-05 : elastic (superuser, aucune ACL -- capacite brute des commandes) =="
+echo "== SP-05: elastic (superuser, no ACL -- raw command capability) =="
 run_query elastic "${ELASTIC_PASSWORD}" control_row \
   'ROW a = 1' 200
 run_query elastic "${ELASTIC_PASSWORD}" from_basic \
@@ -88,7 +88,7 @@ run_query elastic "${ELASTIC_PASSWORD}" enrich_cross_team \
   'FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host | LIMIT 5' 200
 echo
 
-echo "== SP-05 : alice (LDAP -> run_as via le proxy, role equipe_a_viewer, pattern equipe-a-*) =="
+echo "== SP-05: alice (LDAP -> run_as via the proxy, equipe_a_viewer role, equipe-a-* pattern) =="
 run_query alice "${ALICE_PASSWORD}" control_row \
   'ROW a = 1' 200
 run_query alice "${ALICE_PASSWORD}" from_basic \
@@ -109,15 +109,15 @@ run_query alice "${ALICE_PASSWORD}" enrich_cross_team \
   'FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host | LIMIT 5' open
 echo
 
-echo "Cas marqués [CONSTAT OUVERT] ci-dessus = la vraie question de F27 :"
-echo "  - lookup_cross_team (alice) : si le corps contient \"equipe-b-secret\", alice a lu"
-echo "    des données d'une autre équipe via LOOKUP JOIN malgré son ACL -- F27 DOIT vérifier"
-echo "    l'index cible d'un LOOKUP JOIN, pas seulement le FROM."
-echo "  - enrich_cross_team (alice) : si le corps contient \"equipe-b-secret\", même constat"
-echo "    pour ENRICH, en pire : la requête ES|QL ne nomme jamais l'index source de la"
-echo "    policy, donc un parseur F27 qui ne lit que le texte ne peut pas le voir."
+echo "Cases marked [OPEN FINDING] above = F27's real question:"
+echo "  - lookup_cross_team (alice): if the body contains \"equipe-b-secret\", alice read"
+echo "    another team's data via LOOKUP JOIN despite her ACL -- F27 MUST check"
+echo "    the TARGET index of a LOOKUP JOIN, not only the FROM."
+echo "  - enrich_cross_team (alice): if the body contains \"equipe-b-secret\", same finding"
+echo "    for ENRICH, worse: the ES|QL query never names the policy's source"
+echo "    index, so an F27 parser that only reads the text cannot see it."
 echo
 if [ "${SURPRISES}" -gt 0 ]; then
-  echo "Attention : ${SURPRISES} cas attendu(s) refusés ont en fait réussi (voir [CONSTAT] ci-dessus)."
+  echo "Warning: ${SURPRISES} case(s) expected to be refused actually succeeded (see [FINDING] above)."
 fi
-echo "Regarder aussi 'docker compose logs proxy | grep _query' pour auth_scheme/run_as/statut."
+echo "Also look at 'docker compose logs proxy | grep _query' for auth_scheme/run_as/status."

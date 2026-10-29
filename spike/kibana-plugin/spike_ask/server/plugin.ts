@@ -9,11 +9,11 @@ import type { SpikeAskConfig } from './config';
 import type { SpikeAskPluginSetup, SpikeAskPluginStart } from './types';
 import { registerAskRoute } from './routes/ask';
 
-// Plugin New Platform minimal (SP-06). Un seul rôle : exposer une route
-// serveur qui (1) demande un jeton court au proxy avec la session de
-// l'utilisateur courant (variante de l'étape 6 du plan du spike), (2) relaie
-// ce jeton sans le modifier à un moteur factice (F80), (3) renvoie le
-// résultat de vérification du moteur à l'UI.
+// Minimal New Platform plugin (SP-06). Single role: expose a server
+// route that (1) requests a short-lived token from the proxy with the current
+// user's session (variant from step 6 of the spike plan), (2) relays
+// that token unmodified to a dummy engine (F80), (3) returns the
+// engine's verification result to the UI.
 export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPluginStart> {
   private readonly logger: Logger;
 

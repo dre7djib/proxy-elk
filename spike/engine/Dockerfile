@@ -1,6 +1,6 @@
-# Moteur factice jetable du spike SP-06. Même pattern que spike/proxy/Dockerfile :
-# `go mod tidy` résout et télécharge les dépendances à la construction de
-# l'image (pas de go.sum committé), acceptable pour un spike jetable.
+# Disposable dummy engine for the SP-06 spike. Same pattern as spike/proxy/Dockerfile:
+# `go mod tidy` resolves and downloads dependencies at image
+# build time (no committed go.sum), acceptable for a disposable spike.
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod ./

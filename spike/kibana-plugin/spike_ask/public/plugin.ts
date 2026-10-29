@@ -1,9 +1,9 @@
 import type { CoreSetup, CoreStart, Plugin } from '@kbn/core/public';
 import type { SpikeAskPluginSetup, SpikeAskPluginStart } from './types';
 
-// Application minimale "Spike Ask" (F39, réduit à l'essentiel pour SP-06) :
-// un item de menu, une page, un bouton. Pas de question en langage naturel,
-// pas de lien Discover (F28, F41 = J2-05/J2-06, hors périmètre).
+// Minimal "Spike Ask" application (F39, reduced to the essentials for SP-06):
+// a menu item, a page, a button. No natural-language question,
+// no Discover link (F28, F41 = J2-05/J2-06, out of scope).
 export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPluginStart> {
   public setup(core: CoreSetup): SpikeAskPluginSetup {
     core.application.register({

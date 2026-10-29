@@ -1,49 +1,49 @@
 #!/usr/bin/env bash
-# Bootstrap Elasticsearch pour SP-03/SP-04 (prend la suite du bootstrap SP-01).
-# Lancé une fois dans le service `setup` du docker-compose, une fois
-# qu'Elasticsearch répond :
-#   1. règle le mot de passe de kibana_system (repris de SP-01/SP-02) ;
-#   2. crée le rôle proxy_runas (run_as alice, bob, carol) et l'utilisateur
-#      de service proxy_service, que le proxy utilise pour usurper l'identité
-#      des utilisateurs LDAP (F2, F4, SP-03) ;
-#   3. crée des rôles ES "stub" par équipe et niveau (équipe_a_viewer,
-#      equipe_a_editor, equipe_b_viewer, SP-04) : ce service se termine avant
-#      que Kibana ne soit joignable (depends_on service_healthy sur
-#      Elasticsearch seulement), donc impossible d'y poser les privilèges
-#      Kibana (spaces, base read/all) ici. Le rôle existe juste pour que
-#      l'affectation à l'utilisateur ne référence pas un rôle inconnu ; il est
-#      ensuite complété (indices + privilèges Kibana) par
-#      scripts/kibana-bootstrap.sh une fois Kibana démarré (PUT via l'API
-#      rôles de Kibana, qui réécrit entièrement la définition du rôle) ;
-#   4. crée les utilisateurs natifs alice/bob/carol : `run_as` échoue si
-#      l'utilisateur ciblé n'existe pas côté Elasticsearch, même s'il existe
-#      dans l'annuaire. Elasticsearch n'a pas de realm LDAP ici (fonction
-#      payante) : le mot de passe LDAP de ces comptes (celui que l'utilisateur
-#      tape dans Kibana) est validé par le proxy via search-then-bind, jamais
-#      par Elasticsearch.
+# Elasticsearch bootstrap for SP-03/SP-04 (continues the SP-01 bootstrap).
+# Run once in the docker-compose `setup` service, once
+# Elasticsearch responds:
+#   1. set the kibana_system password (carried over from SP-01/SP-02);
+#   2. create the proxy_runas role (run_as alice, bob, carol) and the
+#      proxy_service service user, which the proxy uses to impersonate
+#      LDAP users (F2, F4, SP-03);
+#   3. create ES "stub" roles per team and level (equipe_a_viewer,
+#      equipe_a_editor, equipe_b_viewer, SP-04): this service exits before
+#      Kibana is reachable (depends_on service_healthy on
+#      Elasticsearch only), so Kibana privileges (spaces, base read/all)
+#      cannot be set here. The role exists only so assigning it to the user
+#      does not reference an unknown role; it is then completed (indexes +
+#      Kibana privileges) by scripts/kibana-bootstrap.sh once Kibana has
+#      started (PUT via Kibana's roles API, which fully rewrites the
+#      role definition);
+#   4. create the native users alice/bob/carol: `run_as` fails if
+#      the target user does not exist on the Elasticsearch side, even if they
+#      exist in the directory. Elasticsearch has no LDAP realm here (paid
+#      feature): these accounts' LDAP password (the one the user types in
+#      Kibana) is validated by the proxy via search-then-bind, never
+#      by Elasticsearch.
 #
-# Constat d'exécution SP-03 : leur mot de passe ES ne peut PAS être aléatoire
-# et jeté. Kibana appelle POST /_security/profile/_activate juste après le
-# login (grant_type: "password", avec le mot de passe tapé par l'utilisateur),
-# authentifié avec kibana_system mais vérifié par Elasticsearch lui-même
-# contre son realm natif. Sans mot de passe natif connu, ce point précis
-# échoue en 401 et bloque tout le login Kibana. D'où NATIVE_SHADOW_PASSWORD :
-# un secret partagé, connu seulement du proxy (qui le substitue dans ce seul
-# appel après avoir revérifié le mot de passe LDAP) et de ce script — jamais
-# tapé par un utilisateur, jamais transmis à LDAP, jamais journalisé.
-# Idempotent : relancer le script (ex. `docker compose up` sans -v) met juste
-# à jour les mêmes objets.
+# SP-03 runtime finding: their ES password CANNOT be random and discarded.
+# Kibana calls POST /_security/profile/_activate right after
+# login (grant_type: "password", with the password typed by the user),
+# authenticated as kibana_system but verified by Elasticsearch itself
+# against its native realm. Without a known native password, that exact
+# step fails with 401 and blocks the whole Kibana login. Hence NATIVE_SHADOW_PASSWORD:
+# a shared secret, known only to the proxy (which substitutes it in that one
+# call after re-checking the LDAP password) and this script — never
+# typed by a user, never sent to LDAP, never logged.
+# Idempotent: re-running the script (e.g. `docker compose up` without -v) just
+# updates the same objects.
 set -euo pipefail
 
 ES_URL="http://elasticsearch:9200"
 AUTH=(-u "elastic:${ELASTIC_PASSWORD}")
 
-echo "Attente d'Elasticsearch..."
+echo "Waiting for Elasticsearch..."
 until curl -s "${AUTH[@]}" "${ES_URL}" >/dev/null; do
   sleep 2
 done
 
-echo "Definition du mot de passe de kibana_system..."
+echo "Setting kibana_system password..."
 until curl -s -X POST "${AUTH[@]}" \
   -H "Content-Type: application/json" \
   "${ES_URL}/_security/user/kibana_system/_password" \
@@ -51,7 +51,7 @@ until curl -s -X POST "${AUTH[@]}" \
   | grep -q "^{}"; do
   sleep 2
 done
-echo "kibana_system pret."
+echo "kibana_system ready."
 
 echo "Role proxy_runas (run_as: alice, bob, carol)..."
 curl -sf -X PUT "${AUTH[@]}" \
@@ -64,7 +64,7 @@ curl -sf -X PUT "${AUTH[@]}" \
   }' >/dev/null
 echo "OK"
 
-echo "Utilisateur de service proxy_service..."
+echo "Service user proxy_service..."
 curl -sf -X PUT "${AUTH[@]}" \
   -H "Content-Type: application/json" \
   "${ES_URL}/_security/user/proxy_service" \
@@ -77,7 +77,7 @@ echo "OK"
 
 create_native_user() {
   local username="$1" full_name="$2" role="$3"
-  echo "Utilisateur natif ${username} (role ${role}, requis pour run_as)..."
+  echo "Native user ${username} (role ${role}, required for run_as)..."
   curl -sf -X PUT "${AUTH[@]}" \
     -H "Content-Type: application/json" \
     "${ES_URL}/_security/user/${username}" \
@@ -86,12 +86,12 @@ create_native_user() {
       \"roles\": [\"${role}\"],
       \"full_name\": \"${full_name}\"
     }" >/dev/null
-  echo "OK (mot de passe natif = secret partage proxy/bootstrap, jamais tape par l'utilisateur)"
+  echo "OK (native password = shared proxy/bootstrap secret, never typed by the user)"
 }
 
 create_stub_role() {
   local role_name="$1"
-  echo "Role stub ${role_name} (complete plus tard par kibana-bootstrap.sh, SP-04)..."
+  echo "Stub role ${role_name} (completed later by kibana-bootstrap.sh, SP-04)..."
   curl -sf -X PUT "${AUTH[@]}" \
     -H "Content-Type: application/json" \
     "${ES_URL}/_security/role/${role_name}" \
@@ -102,13 +102,13 @@ create_stub_role() {
   echo "OK"
 }
 
-# Rôles stub par équipe et niveau (SP-04) : équipe A (viewer, editor) et
-# équipe B (viewer). Remplace les rôles built-in viewer/editor de SP-03, qui
-# donnaient accès à tous les spaces Kibana sans isolation par équipe.
-# kibana-bootstrap.sh (lancé après Kibana, dans le service kibana-setup)
-# complète ces rôles : index de l'équipe + privilèges Kibana (base read/all,
-# space de l'équipe). Sans lui, alice/bob/carol n'ont accès à aucun index ni
-# aucun space : fenêtre courte et acceptable entre les deux services setup.
+# Stub roles per team and level (SP-04): team A (viewer, editor) and
+# team B (viewer). Replaces the built-in viewer/editor roles from SP-03, which
+# granted access to all Kibana spaces with no team isolation.
+# kibana-bootstrap.sh (run after Kibana, in the kibana-setup service)
+# completes these roles: team index + Kibana privileges (base read/all,
+# team space). Without it, alice/bob/carol have access to no index and
+# no space: a short, acceptable window between the two setup services.
 create_stub_role equipe_a_viewer
 create_stub_role equipe_a_editor
 create_stub_role equipe_b_viewer
@@ -117,4 +117,4 @@ create_native_user alice "Alice Martin" equipe_a_viewer
 create_native_user bob "Bob Durand" equipe_a_editor
 create_native_user carol "Carol Petit" equipe_b_viewer
 
-echo "Bootstrap Elasticsearch termine (SP-01 a SP-04)."
+echo "Elasticsearch bootstrap complete (SP-01 to SP-04)."

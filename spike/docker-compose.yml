@@ -1,27 +1,27 @@
 name: spike-proxy-elk
 
-# Stack jetable du spike SP-01 à SP-06 : Elasticsearch + Kibana 8.19 avec
-# sécurité activée, un OpenLDAP peuplé d'utilisateurs de test, et un proxy Go
-# qui journalise tous les appels (SP-02) et valide le login LDAP via
-# search-then-bind puis run_as (SP-03, piste A). Login natif "elastic"
-# toujours possible en repli (SP-01). Depuis SP-04, un rôle ES et un space
-# Kibana par équipe (equipe-a, equipe-b) isolent alice/bob/carol les uns des
-# autres (service kibana-setup, scripts/kibana-bootstrap.sh). Depuis SP-06,
-# le proxy émet aussi un jeton court signé (JWT RS256, F78) sur
-# POST /_spike/identity-token, vérifié par un moteur factice (`engine`,
-# F79) : la paire de clés du spike vit dans ./keys (voir keys/README.md).
-# Kibana est construit depuis kibana/Dockerfile (image officielle + plugin
-# spike_ask précompilé, kibana-plugin/) ; voir
-# spike/README.md#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice.
-# Pas de TLS entre les services, LDAP en clair : simplifie le spike, accepté
-# pour un spike jetable (voir spike/README.md, F5/F68 pour la suite).
+# Disposable stack for the SP-01 to SP-06 spike: Elasticsearch + Kibana 8.19 with
+# security enabled, an OpenLDAP populated with test users, and a Go proxy
+# that logs every call (SP-02) and validates LDAP login via
+# search-then-bind then run_as (SP-03, approach A). Native "elastic"
+# login remains available as a fallback (SP-01). Since SP-04, an ES role and a
+# Kibana space per team (equipe-a, equipe-b) isolate alice/bob/carol from
+# each other (kibana-setup service, scripts/kibana-bootstrap.sh). Since SP-06,
+# the proxy also issues a short-lived signed token (JWT RS256, F78) on
+# POST /_spike/identity-token, verified by a dummy engine (`engine`,
+# F79): the spike key pair lives in ./keys (see keys/README.md).
+# Kibana is built from kibana/Dockerfile (official image + precompiled
+# spike_ask plugin, kibana-plugin/); see
+# spike/README.md#sp-06-minimal-kibana-plugin--short-lived-token-dummy-engine.
+# No TLS between services, LDAP in the clear: simplifies the spike, accepted
+# for a disposable spike (see spike/README.md, F5/F68 for the follow-up).
 
 services:
-  # Prépare Elasticsearch une fois qu'il répond, puis s'arrête (pattern
-  # officiel Elastic) : mot de passe de kibana_system (SP-01), et depuis
-  # SP-03 le rôle + l'utilisateur de service pour le run_as, ainsi que les
-  # utilisateurs natifs alice/bob/carol (requis pour que run_as fonctionne,
-  # voir spike/scripts/es-bootstrap.sh).
+  # Prepare Elasticsearch once it responds, then exit (official
+  # Elastic pattern): kibana_system password (SP-01), and since
+  # SP-03 the role + service user for run_as, as well as the
+  # native users alice/bob/carol (required for run_as to work,
+  # see spike/scripts/es-bootstrap.sh).
   setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     environment:
@@ -74,36 +74,36 @@ services:
       timeout: 10s
       retries: 30
 
-  # Proxy du spike SP-02/SP-03, entre Kibana et Elasticsearch : journalise
-  # chaque appel en JSON sur stdout (SP-02) et, depuis SP-03, valide les
-  # logins LDAP (search-then-bind) puis parle à Elasticsearch avec le compte
-  # de service proxy_service en usurpant l'identité (run_as, piste A). Voir
-  # spike/proxy/main.go. ACL/J1 toujours hors périmètre (F66, F67).
+  # Spike proxy SP-02/SP-03, between Kibana and Elasticsearch: logs
+  # every call as JSON on stdout (SP-02) and, since SP-03, validates
+  # LDAP logins (search-then-bind) then talks to Elasticsearch with the
+  # proxy_service service account impersonating the user (run_as, approach A). See
+  # spike/proxy/main.go. ACL/J1 still out of scope (F66, F67).
   proxy:
     build: ./proxy
     environment:
       - UPSTREAM_URL=http://elasticsearch:9200
       - LISTEN_ADDR=:9200
-      # SP-03 : search-then-bind (F4) contre OpenLDAP, puis run_as avec le
-      # compte de service. Le DN et le mot de passe de lecture sont ceux
-      # créés par LDAP_READONLY_USER sur le service openldap ci-dessous.
+      # SP-03: search-then-bind (F4) against OpenLDAP, then run_as with the
+      # service account. The read DN and password are those
+      # created by LDAP_READONLY_USER on the openldap service below.
       - LDAP_URL=ldap://openldap:389
       - LDAP_READONLY_DN=cn=readonly,dc=example,dc=org
       - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
       - LDAP_BASE_DN=ou=people,dc=example,dc=org
-      # Cache court de l'authentification LDAP : SP-02 a mesuré ~145
-      # _authenticate et ~148 _has_privileges par cycle connexion + Discover,
-      # un bind LDAP à chacun rendrait l'UI perceptiblement plus lente.
+      # Short LDAP authentication cache: SP-02 measured ~145
+      # _authenticate and ~148 _has_privileges per login + Discover cycle;
+      # an LDAP bind on each would make the UI noticeably slower.
       - LDAP_CACHE_TTL=2m
       - PROXY_SERVICE_USER=proxy_service
       - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
-      # Constat d'exécution SP-03 : requis pour POST
-      # /_security/profile/_activate (voir proxy/main.go,
-      # profileActivateMiddleware, et scripts/es-bootstrap.sh).
+      # SP-03 runtime finding: required for POST
+      # /_security/profile/_activate (see proxy/main.go,
+      # profileActivateMiddleware, and scripts/es-bootstrap.sh).
       - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
-      # SP-06 : émission du jeton court (F78) sur POST /_spike/identity-token,
-      # jamais relayé à Elasticsearch. Clé privée montée ci-dessous (lecture
-      # seule) ; le moteur (`engine`) ne reçoit que la clé publique.
+      # SP-06: issue the short-lived token (F78) on POST /_spike/identity-token,
+      # never forwarded to Elasticsearch. Private key mounted below (read-
+      # only); the engine (`engine`) only receives the public key.
       - JWT_PRIVATE_KEY_PATH=/keys/private.pem
       - JWT_ISSUER=spike-proxy
       - JWT_AUDIENCE=spike-engine
@@ -120,8 +120,8 @@ services:
     networks:
       - spike
     healthcheck:
-      # Même test que pour Elasticsearch : s'il passe à travers le proxy,
-      # c'est la preuve que le passe-plat est bien transparent au niveau HTTP.
+      # Same test as for Elasticsearch: if it passes through the proxy,
+      # that proves the passthrough is transparent at the HTTP level.
       test:
         [
           "CMD-SHELL",
@@ -131,22 +131,22 @@ services:
       timeout: 10s
       retries: 30
 
-  # Moteur factice du spike SP-06 (F78-F82) : processus séparé du proxy, qui
-  # vérifie le jeton court (signature RS256, expiration, destinataire) sans
-  # jamais détenir la clé privée (voir spike/engine/, keys/README.md). Pas
-  # d'appel à Elasticsearch, pas de question en langage naturel : ce n'est
-  # pas l'assistant IA (J2-06/J2-07), seulement le vérificateur de jeton que
-  # SP-06 doit valider. Port non publié sur l'hôte : seuls le proxy/Kibana
-  # (réseau spike) ont besoin de l'atteindre ; verify-sp06.sh y accède via
+  # Dummy engine for the SP-06 spike (F78-F82): process separate from the proxy,
+  # which verifies the short-lived token (RS256 signature, expiry, audience)
+  # without ever holding the private key (see spike/engine/, keys/README.md). No
+  # Elasticsearch call, no natural-language question: this is
+  # not the AI assistant (J2-06/J2-07), only the token verifier that
+  # SP-06 must validate. Port not published on the host: only proxy/Kibana
+  # (spike network) need to reach it; verify-sp06.sh accesses it via
   # `docker compose exec`.
   engine:
     build: ./engine
     environment:
       - JWT_PUBLIC_KEY_PATH=/keys/public.pem
       - JWT_AUDIENCE=spike-engine
-      # Tolérance sur l'écart d'horloge entre le proxy et le moteur (F79) :
-      # généreuse ici (processus voisins sur la même machine), mais le
-      # mécanisme est le même qui serait nécessaire entre deux hôtes.
+      # Tolerance for clock skew between the proxy and the engine (F79):
+      # generous here (neighboring processes on the same machine), but the
+      # mechanism is the same that would be needed between two hosts.
       - JWT_CLOCK_SKEW=60s
     volumes:
       - ./keys/public.pem:/keys/public.pem:ro
@@ -158,12 +158,12 @@ services:
       timeout: 5s
       retries: 15
 
-  # Prépare Kibana une fois qu'il répond (SP-04) : spaces equipe-a/equipe-b,
-  # rôles equipe_a_viewer/equipe_a_editor/equipe_b_viewer complétés avec leurs
-  # privilèges Kibana (base read/all, spaces) et leurs index, données et
-  # dashboard de test. Service distinct de `setup` : celui-ci se termine
-  # avant que Kibana existe, donc les privilèges Kibana ne peuvent être posés
-  # qu'une fois Kibana démarré (voir scripts/kibana-bootstrap.sh).
+  # Prepare Kibana once it responds (SP-04): equipe-a/equipe-b spaces,
+  # equipe_a_viewer/equipe_a_editor/equipe_b_viewer roles completed with their
+  # Kibana privileges (base read/all, spaces) and their indexes, test data and
+  # dashboard. Separate from the `setup` service: that one exits
+  # before Kibana exists, so Kibana privileges can only be set
+  # once Kibana has started (see scripts/kibana-bootstrap.sh).
   kibana-setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     environment:
@@ -177,14 +177,14 @@ services:
         condition: service_healthy
     command: ["bash", "/usr/local/bin/kibana-bootstrap.sh"]
 
-  # Image construite depuis kibana/Dockerfile (SP-06) : Kibana officielle
-  # 8.19.23 + plugin spike_ask installé (bin/kibana-plugin install). Constat
-  # d'exécution mis à jour : contrairement au constat initial de ce ticket
-  # (bootstrap trop lourd pour les ~4 Go alloués ici), le build a fini par
-  # réussir dans ce même environnement après deux correctifs mineurs du
-  # Dockerfile (owner manquant dans kibana.json, exécution en utilisateur
-  # non-root plutôt que --allow-root pour la tâche interne de webpack) —
-  # voir spike/README.md#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice.
+  # Image built from kibana/Dockerfile (SP-06): official Kibana
+  # 8.19.23 + spike_ask plugin installed (bin/kibana-plugin install). Runtime
+  # finding updated: unlike this ticket's initial finding
+  # (bootstrap too heavy for the ~4 GB allocated here), the build eventually
+  # succeeded in this same environment after two minor Dockerfile
+  # fixes (missing owner in kibana.json, running as a non-root
+  # user rather than --allow-root for the internal webpack task) —
+  # see spike/README.md#sp-06-minimal-kibana-plugin--short-lived-token-dummy-engine.
   kibana:
     build:
       context: .
@@ -200,20 +200,20 @@ services:
         condition: service_healthy
     environment:
       - SERVERNAME=kibana
-      # SP-02 : Kibana ne parle plus directement à Elasticsearch, il passe
-      # par le proxy. Le compte kibana_system s'authentifie normalement,
-      # le proxy relaie l'en-tête Authorization sans le modifier.
+      # SP-02: Kibana no longer talks directly to Elasticsearch; it goes
+      # through the proxy. The kibana_system account authenticates normally;
+      # the proxy forwards the Authorization header unchanged.
       - ELASTICSEARCH_HOSTS=http://proxy:9200
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
       - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
       - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
-      # SP-06 : pas besoin de surcharger `spikeAsk.engineUrl` ici (ce serait
-      # SPIKEASK_ENGINEURL en convention kibana-docker, dots retirés) : le
-      # defaultValue du schéma de config (kibana-plugin/spike_ask/server/config.ts)
-      # pointe déjà vers http://engine:8080, qui est l'adresse correcte du
-      # service `engine` ci-dessous sur le réseau `spike`.
+      # SP-06: no need to override `spikeAsk.engineUrl` here (that would be
+      # SPIKEASK_ENGINEURL in kibana-docker convention, dots stripped): the
+      # config schema defaultValue (kibana-plugin/spike_ask/server/config.ts)
+      # already points to http://engine:8080, which is the correct address of
+      # the `engine` service below on the `spike` network.
     mem_limit: 1g
     ports:
       - "127.0.0.1:5601:5601"
@@ -231,16 +231,16 @@ services:
       timeout: 10s
       retries: 30
 
-  # OpenLDAP peuplé d'utilisateurs de test (alice, bob, carol) via le LDIF de
-  # ldap/01-bootstrap.ldif. Branché à Kibana depuis SP-03, via le search-then-
-  # bind du proxy (spike/proxy/main.go) : OpenLDAP ne parle jamais directement
-  # à Kibana ni à Elasticsearch.
+  # OpenLDAP populated with test users (alice, bob, carol) via the LDIF in
+  # ldap/01-bootstrap.ldif. Wired to Kibana since SP-03, via the proxy's
+  # search-then-bind (spike/proxy/main.go): OpenLDAP never talks directly
+  # to Kibana or Elasticsearch.
   #
-  # Image : osixia/openldap, pas bitnami/openldap. bitnami a retiré ses images
-  # gratuites de Docker Hub en 2025 (docker.io/bitnami/openldap:2.6 introuvable
-  # au moment du spike) ; osixia/openldap reste tirable et largement utilisé,
-  # bien que le projet soit en maintenance réduite (constat journalisé dans le
-  # plan du spike).
+  # Image: osixia/openldap, not bitnami/openldap. bitnami withdrew its free
+  # images from Docker Hub in 2025 (docker.io/bitnami/openldap:2.6 not found
+  # at the time of the spike); osixia/openldap remains pullable and widely used,
+  # even though the project is in reduced maintenance (finding recorded in the
+  # spike plan).
   openldap:
     image: osixia/openldap:1.5.0
     command: ["--copy-service"]
@@ -251,9 +251,9 @@ services:
       - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD}
       - LDAP_CONFIG_PASSWORD=${LDAP_ADMIN_PASSWORD}
       - LDAP_TLS=false
-      # Compte de lecture pour le search-then-bind du proxy (F4, SP-03).
-      # L'image lui ajoute une ACL de lecture sur tout l'arbre ; un compte
-      # créé à la main dans le LDIF custom n'aurait pas ce droit par défaut.
+      # Read account for the proxy's search-then-bind (F4, SP-03).
+      # The image adds a read ACL on the whole tree; an account
+      # created by hand in the custom LDIF would not have that right by default.
       - LDAP_READONLY_USER=true
       - LDAP_READONLY_USER_USERNAME=readonly
       - LDAP_READONLY_USER_PASSWORD=${LDAP_READONLY_PASSWORD}

@@ -6,10 +6,10 @@ interface AskRouteDeps {
   logger: Logger;
 }
 
-// Forme du jeton renvoyé par le proxy sur /_spike/identity-token (voir
-// spike/proxy/main.go, mintIdentityTokenMiddleware). Le plugin ne déchiffre
-// ni ne vérifie rien lui-même (F80) : il ne lit que le champ `token` pour le
-// relayer au moteur, verbatim.
+// Shape of the token returned by the proxy on /_spike/identity-token (see
+// spike/proxy/main.go, mintIdentityTokenMiddleware). The plugin neither decrypts
+// nor verifies anything itself (F80): it only reads the `token` field to
+// relay it to the engine, verbatim.
 interface IdentityTokenResponse {
   token: string;
 }
@@ -22,29 +22,29 @@ interface EngineWhoamiResponse {
   [key: string]: unknown;
 }
 
-// registerAskRoute expose POST /api/spike_ask/ask : la seule route de ce
-// plugin (SP-06). Elle matérialise la variante à tester en premier pour
-// F78-F82 (voir le plan du spike, après l'étape 6) : obtenir le jeton court
-// *via Elasticsearch*, avec la session de l'utilisateur courant, plutôt que
-// par un canal séparé.
+// registerAskRoute exposes POST /api/spike_ask/ask: this plugin's only
+// route (SP-06). It materializes the variant to test first for
+// F78-F82 (see the spike plan, after step 6): obtain the short-lived token
+// *via Elasticsearch*, with the current user's session, rather than
+// through a separate channel.
 export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
   router.post(
     {
       path: '/api/spike_ask/ask',
       validate: { body: schema.object({}, { unknowns: 'ignore' }) },
-      // authRequired: true (valeur par défaut) : pas de session Kibana, pas
-      // de route. C'est délibéré, alice doit être connectée pour ce spike.
+      // authRequired: true (default): no Kibana session, no
+      // route. Deliberate: alice must be logged in for this spike.
     },
     async (context, request, response) => {
       const core = await context.core;
 
-      // Point central du spike : asCurrentUser, PAS asInternalUser. Le
-      // client ES scopé relaie l'Authorization/cookie d'origine de la
-      // requête HTTP d'alice jusqu'au proxy (F2/F12 : ni le plugin ni ce
-      // code ne voient jamais son mot de passe, seulement ce que Kibana a
-      // déjà négocié pour sa session). Utiliser asInternalUser ici minterait
-      // un jeton pour kibana_system, pas pour l'utilisateur : constat à
-      // surveiller si jamais ce garde-fou est retiré par erreur.
+      // Central point of the spike: asCurrentUser, NOT asInternalUser. The
+      // scoped ES client forwards alice's original HTTP request
+      // Authorization/cookie to the proxy (F2/F12: neither the plugin nor this
+      // code ever sees her password, only what Kibana has
+      // already negotiated for her session). Using asInternalUser here would mint
+      // a token for kibana_system, not for the user: finding to
+      // watch if this guard is ever removed by mistake.
       const esClient = core.elasticsearch.client.asCurrentUser;
 
       try {
@@ -54,16 +54,16 @@ export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
         })) as IdentityTokenResponse;
 
         if (!tokenResponse?.token) {
-          deps.logger.warn('réponse du proxy sans champ token sur /_spike/identity-token');
+          deps.logger.warn('proxy response missing token field on /_spike/identity-token');
           return response.customError({
             statusCode: 502,
-            body: { message: 'le proxy n’a pas renvoyé de jeton' },
+            body: { message: 'proxy did not return a token' },
           });
         }
 
-        // Relais sans modification (F80) : aucune clé lue, aucun claim
-        // réécrit, le header Authorization du moteur ne contient rien
-        // d'autre que ce que le proxy a signé.
+        // Relay unmodified (F80): no key read, no claim
+        // rewritten; the engine Authorization header contains nothing
+        // other than what the proxy signed.
         const engineResponse = await fetch(`${deps.engineUrl}/whoami`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${tokenResponse.token}` },
@@ -76,16 +76,16 @@ export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
         if (!engineResponse.ok) {
           return response.customError({
             statusCode: engineResponse.status,
-            body: { message: 'moteur factice : jeton refusé', detail: engineBody },
+            body: { message: 'dummy engine: token refused', detail: engineBody },
           });
         }
 
         return response.ok({ body: engineBody });
       } catch (err) {
-        deps.logger.error(`échec de l'appel /_spike/identity-token ou du moteur: ${err}`);
+        deps.logger.error(`/_spike/identity-token or engine call failed: ${err}`);
         return response.customError({
           statusCode: 502,
-          body: { message: 'échec de la variante jeton via Elasticsearch', detail: `${err}` },
+          body: { message: 'token-via-Elasticsearch variant failed', detail: `${err}` },
         });
       }
     }

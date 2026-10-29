@@ -1,194 +1,194 @@
-# Spike SP-01 à SP-08 — stack 8.19 + OpenLDAP + proxy + login LDAP (run_as) + rôles/spaces par équipe + ES|QL + jeton court + licence Basic
+# Spike SP-01 to SP-08 — stack 8.19 + OpenLDAP + proxy + LDAP login (run_as) + roles/spaces per team + ES|QL + short-lived token + Basic license
 
-Stack **jetable** du spike technique (voir [le plan du spike](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). Pas de tests, pas de belle architecture : le but est de lever un risque précis.
+**Throwaway** stack of the technical spike (see [the spike plan](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md)). No tests, no polished architecture: the goal is to remove a precise risk.
 
-**Périmètre de SP-01** : Elasticsearch + Kibana 8.19 avec la sécurité activée, et un OpenLDAP peuplé d'utilisateurs de test. Le login natif testé ici est celui de l'utilisateur intégré `elastic`.
+**Scope of SP-01**: Elasticsearch + Kibana 8.19 with security enabled, and an OpenLDAP populated with test users. The native login tested here is that of the built-in `elastic` user.
 
-**Périmètre de SP-02** : un proxy Go minimal ([`proxy/`](proxy/)) s'intercale maintenant entre Kibana et Elasticsearch. C'est un **passe-plat transparent** (aucune authentification ni autorisation ajoutée) qui journalise chaque appel en JSON sur stdout, pour observer ce que Kibana envoie réellement à Elasticsearch.
+**Scope of SP-02**: a minimal Go proxy ([`proxy/`](proxy/)) now sits between Kibana and Elasticsearch. It is a **transparent passthrough** (no authentication or authorization added) that logs each call as JSON on stdout, to observe what Kibana actually sends to Elasticsearch.
 
-**Périmètre de SP-03** : le proxy valide désormais le login LDAP (search-then-bind, F4) puis parle à Elasticsearch avec un compte de service en usurpant l'identité de l'utilisateur (`es-security-runas-user`, **piste A**). Alice se connecte à Kibana avec son mot de passe LDAP et apparaît avec sa propre identité et son rôle. **Piste A validée par exécution réelle**, avec un correctif non prévu au départ : voir [Constat d'exécution — `_security/profile/_activate`](#constat-dexécution--securityprofile_activate-sp-03) plus bas.
+**Scope of SP-03**: the proxy now validates LDAP login (search-then-bind, F4) then talks to Elasticsearch with a service account impersonating the user (`es-security-runas-user`, **Track A**). Alice logs into Kibana with her LDAP password and appears with her own identity and role. **Track A validated by real execution**, with a fix not planned at the start: see [Runtime finding — `_security/profile/_activate`](#runtime-finding--securityprofile_activate-sp-03) below.
 
-**Périmètre de SP-04** : les rôles ES built-in `viewer`/`editor` de SP-03 (accès à tous les spaces) sont remplacés par un rôle par couple équipe/niveau (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`) et un space Kibana par équipe (`equipe-a`, `equipe-b`). Nouveau service `kibana-setup` ([`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh)), lancé après que Kibana soit joignable, qui crée les spaces et complète les rôles via l'API rôles de Kibana (privilèges `elasticsearch` + `kibana`, pas l'API rôles d'Elasticsearch directement). **Critère de réussite atteint par exécution réelle** : alice lit seulement le space et les données de l'équipe A, bob modifie un dashboard de l'équipe A, carol ne voit rien de l'équipe A — vérifié via [`scripts/verify.sh`](scripts/verify.sh). Détail dans [Rôles ES et spaces Kibana par équipe](#rôles-es-et-spaces-kibana-par-équipe-sp-04) plus bas.
+**Scope of SP-04**: the built-in ES `viewer`/`editor` roles from SP-03 (access to all spaces) are replaced by a role per team/level pair (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`) and a Kibana space per team (`equipe-a`, `equipe-b`). New `kibana-setup` service ([`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh)), started after Kibana is reachable, which creates the spaces and completes the roles via Kibana’s roles API (`elasticsearch` + `kibana` privileges, not Elasticsearch’s roles API directly). **Success criterion met by real execution**: alice reads only team A’s space and data, bob modifies a team A dashboard, carol sees nothing of team A — verified via [`scripts/verify.sh`](scripts/verify.sh). Detail in [ES roles and Kibana spaces per team](#es-roles-and-kibana-spaces-per-team-sp-04) below.
 
-**Périmètre de SP-05** : `FROM`, `LOOKUP JOIN` et `ENRICH` testés via le proxy sur 8.19.23, en `elastic` puis en `alice` (chemin LDAP → `run_as`). Les trois fonctionnent. Constat majeur : l'ACL native d'Elasticsearch protège l'index **cible** d'un `LOOKUP JOIN` tout comme un `FROM`, mais **pas** celui d'une policy `ENRICH` (seulement un privilège cluster global `monitor_enrich`/`manage_enrich`) — fuite inter-équipe démontrée. Détail dans [SP-05 FROM LOOKUP JOIN et ENRICH via le proxy](#sp-05-from-lookup-join-et-enrich-via-le-proxy) plus bas.
+**Scope of SP-05**: `FROM`, `LOOKUP JOIN` and `ENRICH` tested via the proxy on 8.19.23, as `elastic` then as `alice` (LDAP path → `run_as`). All three work. Major finding: Elasticsearch’s native ACL protects the **target** index of a `LOOKUP JOIN` just like a `FROM`, but **not** that of an `ENRICH` policy (only a global cluster privilege `monitor_enrich`/`manage_enrich`) — cross-team leak demonstrated. Detail in [SP-05 FROM LOOKUP JOIN and ENRICH via the proxy](#sp-05-from-lookup-join-and-enrich-via-the-proxy) below.
 
-**Périmètre de SP-06** : jeton court d'identité (JWT RS256, F78-F82) entre un plugin Kibana et un moteur factice, via un nouveau service `engine` ([`spike/engine/`](engine/)) et une route de minting dans le proxy (`POST /_spike/identity-token`, [`spike/proxy/main.go`](proxy/main.go)). La variante retenue en premier par le plan du spike — demander le jeton via Elasticsearch, avec la session de l'utilisateur — **fonctionne, vérifié par exécution réelle, de bout en bout, plugin Kibana réellement compilé et chargé compris** : le plugin ([`spike/kibana-plugin/`](kibana-plugin/)) appelle le proxy via `asCurrentUser`, le proxy émet un jeton portant l'identité et les groupes LDAP d'alice, et le moteur en vérifie signature, expiration et destinataire, acceptant le bon jeton et refusant quatre vecteurs invalides. Détail dans [SP-06 Plugin Kibana minimal + jeton court](#sp-06-plugin-kibana-minimal--jeton-court-moteur-factice) plus bas.
+**Scope of SP-06**: short-lived identity token (JWT RS256, F78-F82) between a Kibana plugin and a dummy engine, via a new `engine` service ([`spike/engine/`](engine/)) and a minting route in the proxy (`POST /_spike/identity-token`, [`spike/proxy/main.go`](proxy/main.go)). The variant chosen first by the spike plan — request the token via Elasticsearch, with the user’s session — **works, verified by real execution, end to end, including a Kibana plugin actually compiled and loaded**: the plugin ([`spike/kibana-plugin/`](kibana-plugin/)) calls the proxy via `asCurrentUser`, the proxy issues a token carrying alice’s identity and LDAP groups, and the engine verifies signature, expiration and audience, accepting the good token and rejecting four invalid vectors. Detail in [SP-06 Minimal Kibana plugin + short-lived token](#sp-06-minimal-kibana-plugin--short-lived-token-dummy-engine) below.
 
-**Périmètre de SP-07** : constat écrit, aucun changement de code. Spaces, rôles et feature controls `base`/`feature` tiennent sous la licence **Basic** auto-générée ; le proxy ne réécrit pas `GET /_license` ni `GET /_xpack`, et une fonction Platinum (field-level security) est refusée de la même façon en direct et à travers le proxy. Détail dans [SP-07 Licence Kibana vs proxy](#sp-07-licence-kibana-vs-proxy) plus bas.
+**Scope of SP-07**: written finding, no code change. Spaces, roles and `base`/`feature` feature controls hold under the auto-generated **Basic** license; the proxy does not rewrite `GET /_license` or `GET /_xpack`, and a Platinum feature (field-level security) is denied the same way direct and through the proxy. Detail in [SP-07 Kibana license vs proxy](#kibana-license-vs-proxy-sp-07) below.
 
-**Périmètre de SP-08** : spike clos. Compte rendu dans [le plan](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md#compte-rendu-sp-08) ; besoins F2, F27, F40, F68, F70–F75, F82 mis à jour. **Ce docker-compose est la base de F68** (J1-13) : le conserver, ne pas le jeter.
+**Scope of SP-08**: spike closed. Report in [the plan](../docs/Plan%20du%20spike%20%20proxy%20Elasticsearch%20et%20assistant%20IA%20dans%20Kibana.md#report-sp-08); requirements F2, F27, F40, F68, F70–F75, F82 updated. **This docker-compose is the base of F68** (J1-13): keep it, do not throw it away.
 
-## Démarrer
+## Start
 
 ```sh
 cd spike
-cp .env.example .env   # ajuster les mots de passe si besoin
+cp .env.example .env   # adjust passwords if needed
 docker compose up -d
 ./scripts/verify.sh
 ```
 
-`verify.sh` attend que les services répondent, puis vérifie :
+`verify.sh` waits for the services to respond, then checks:
 
-- qu'Elasticsearch accepte `elastic` / `ELASTIC_PASSWORD` ;
-- que le proxy est un passe-plat transparent (réponse identique en direct et via le proxy) et qu'une recherche authentifiée passe à travers lui (SP-02) ;
-- que Kibana accepte ce même login via son API interne (`/internal/security/login`), preuve du critère de réussite « Kibana accepte un login natif » — maintenant à travers le proxy, puisque `ELASTICSEARCH_HOSTS` de Kibana pointe dessus ;
-- qu'OpenLDAP contient alice, bob, carol et leurs groupes d'équipe, et qu'un bind LDAP avec un mauvais mot de passe est refusé ;
-- **(SP-03)** qu'Elasticsearch authentifie alice comme elle-même (`run_as`) avec son rôle, et refuse un mauvais mot de passe LDAP sans jamais l'exposer à Elasticsearch ;
-- **(SP-03)** qu'alice se connecte à **Kibana** avec son mot de passe LDAP et apparaît sous sa propre identité, qu'un mauvais mot de passe est refusé, et que le login natif `elastic` n'a pas régressé ;
-- **(SP-04)** que le service `kibana-setup` s'est terminé avec succès, qu'alice ne voit que le space `equipe-a` et ses données, que bob peut modifier un dashboard de l'équipe A, et que carol ne voit ni le space ni les données de l'équipe A (critère de réussite du ticket).
+- that Elasticsearch accepts `elastic` / `ELASTIC_PASSWORD`;
+- that the proxy is a transparent passthrough (identical response direct and via the proxy) and that an authenticated search goes through it (SP-02);
+- that Kibana accepts that same login via its internal API (`/internal/security/login`), proof of the success criterion “Kibana accepts a native login” — now through the proxy, since Kibana’s `ELASTICSEARCH_HOSTS` points at it;
+- that OpenLDAP contains alice, bob, carol and their team groups, and that an LDAP bind with a bad password is denied;
+- **(SP-03)** that Elasticsearch authenticates alice as herself (`run_as`) with her role, and rejects a bad LDAP password without ever exposing it to Elasticsearch;
+- **(SP-03)** that alice logs into **Kibana** with her LDAP password and appears under her own identity, that a bad password is denied, and that the native `elastic` login has not regressed;
+- **(SP-04)** that the `kibana-setup` service finished successfully, that alice only sees space `equipe-a` and its data, that bob can modify a team A dashboard, and that carol sees neither the space nor the data of team A (the ticket’s success criterion).
 
-Ouvrir ensuite http://127.0.0.1:5601 dans un navigateur et se connecter avec `alice` / `alicepass`, `bob` / `bobpass` ou `carol` / `carolpass` (ou `elastic` / le mot de passe de `.env`), pour une confirmation visuelle : le space switcher ne propose que `equipe-a` à alice/bob et `equipe-b` à carol, et le dashboard « Dashboard equipe A (SP-04) » n'est visible/modifiable que dans le space `equipe-a`.
+Then open http://127.0.0.1:5601 in a browser and log in with `alice` / `alicepass`, `bob` / `bobpass` or `carol` / `carolpass` (or `elastic` / the password from `.env`), for a visual confirmation: the space switcher only offers `equipe-a` to alice/bob and `equipe-b` to carol, and the “Dashboard equipe A (SP-04)” dashboard is only visible/editable in space `equipe-a`.
 
-## Accès
+## Access
 
-| Service | URL | Identifiants |
+| Service | URL | Credentials |
 | --- | --- | --- |
-| Elasticsearch (direct) | http://127.0.0.1:9200 | `elastic` / `ELASTIC_PASSWORD` (voir `.env`) |
-| Proxy (vers Elasticsearch) | http://127.0.0.1:9210 | `elastic` en passe-plat, ou **tout utilisateur LDAP** (alice/bob/carol) authentifié via le proxy (SP-03) |
-| Kibana (passe par le proxy) | http://127.0.0.1:5601 | `elastic` / `ELASTIC_PASSWORD`, ou alice/bob/carol avec leur mot de passe LDAP (SP-03) |
+| Elasticsearch (direct) | http://127.0.0.1:9200 | `elastic` / `ELASTIC_PASSWORD` (see `.env`) |
+| Proxy (to Elasticsearch) | http://127.0.0.1:9210 | `elastic` as passthrough, or **any LDAP user** (alice/bob/carol) authenticated via the proxy (SP-03) |
+| Kibana (goes through the proxy) | http://127.0.0.1:5601 | `elastic` / `ELASTIC_PASSWORD`, or alice/bob/carol with their LDAP password (SP-03) |
 | OpenLDAP | ldap://127.0.0.1:1389 | base `dc=example,dc=org`, admin `cn=admin,dc=example,dc=org` |
 
-Utilisateurs LDAP de test (`ldap/01-bootstrap.ldif`), mots de passe en clair dans le LDIF (spike, pas un vrai secret) :
+LDAP test users (`ldap/01-bootstrap.ldif`), passwords in clear in the LDIF (spike, not a real secret):
 
-| uid | Mot de passe | Groupe LDAP | Rôle natif ES (SP-04) | Space Kibana |
+| uid | Password | LDAP group | Native ES role (SP-04) | Kibana space |
 | --- | --- | --- | --- | --- |
-| alice | alicepass | `equipe-a-viewer` | `equipe_a_viewer` (lecture) | `equipe-a` seulement |
-| bob | bobpass | `equipe-a-editor` | `equipe_a_editor` (lecture+écriture Kibana) | `equipe-a` seulement |
-| carol | carolpass | `equipe-b-viewer` | `equipe_b_viewer` (lecture) | `equipe-b` seulement |
+| alice | alicepass | `equipe-a-viewer` | `equipe_a_viewer` (read) | `equipe-a` only |
+| bob | bobpass | `equipe-a-editor` | `equipe_a_editor` (Kibana read+write) | `equipe-a` only |
+| carol | carolpass | `equipe-b-viewer` | `equipe_b_viewer` (read) | `equipe-b` only |
 
-Le groupe LDAP n'est pas encore mappé automatiquement vers le rôle ES (mapping groupes → équipe/niveau, F72) : l'affectation reste statique dans [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh), comme en SP-03 ; ça arrivera avec la config YAML de J2-01. Côté Elasticsearch, alice/bob/carol ont un mot de passe natif qui n'est **jamais** celui ci-dessus (voir le constat SP-03 plus bas) : seul le mot de passe LDAP compte pour se connecter.
+The LDAP group is not yet mapped automatically to the ES role (groups → team/level mapping, F72): assignment remains static in [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh), as in SP-03; that comes with the YAML config of J2-01. On the Elasticsearch side, alice/bob/carol have a native password that is **never** the one above (see the SP-03 finding below): only the LDAP password counts for login.
 
-Compte de lecture pour le search-then-bind (F4, SP-03) : `cn=readonly,dc=example,dc=org` / `readonlypass` (créé par `LDAP_READONLY_USER=true`, pas `uid=readonly` comme un LDIF classique l'aurait créé).
+Read account for search-then-bind (F4, SP-03): `cn=readonly,dc=example,dc=org` / `readonlypass` (created by `LDAP_READONLY_USER=true`, not `uid=readonly` as a classic LDIF would have created it).
 
-## Journal du proxy (SP-02/SP-03)
+## Proxy log (SP-02/SP-03)
 
-Chaque appel HTTP qui transite par le proxy produit une ligne JSON sur stdout (méthode, chemin, requête, statut, durée, et deux indicateurs `security` et `kibana_index`, voir SP-02). Depuis SP-03, quatre champs en plus tracent l'authentification (jamais le mot de passe) :
+Each HTTP call that transits through the proxy produces a JSON line on stdout (method, path, request, status, duration, and two flags `security` and `kibana_index`, see SP-02). Since SP-03, four extra fields trace authentication (never the password):
 
-- `auth_scheme` : `passthrough` (compte de service ou `elastic`), `ldap-runas` (utilisateur LDAP authentifié, requête relayée avec `run_as`), `ldap-profile-activate` (correctif `/_security/profile/_activate`, voir plus bas), `ldap-denied` (LDAP refusé), `basic-invalid`, ou `none` (pas d'en-tête).
-- `user` : l'utilisateur authentifié (jamais le mot de passe).
-- `run_as` : présent uniquement en `ldap-runas`, l'identité usurpée auprès d'Elasticsearch.
-- `ldap_ms` : durée du search-then-bind (ou 0 si servi par le cache de 2 minutes, voir `LDAP_CACHE_TTL`).
+- `auth_scheme`: `passthrough` (service account or `elastic`), `ldap-runas` (authenticated LDAP user, request relayed with `run_as`), `ldap-profile-activate` (fix for `/_security/profile/_activate`, see below), `ldap-denied` (LDAP denied), `basic-invalid`, or `none` (no header).
+- `user`: the authenticated user (never the password).
+- `run_as`: present only in `ldap-runas`, the identity impersonated towards Elasticsearch.
+- `ldap_ms`: duration of search-then-bind (or 0 if served from the 2-minute cache, see `LDAP_CACHE_TTL`).
 
 ```sh
 docker compose logs -f proxy
-docker compose logs proxy | grep '"security":true'       # appels à l'API de sécurité ES
-docker compose logs proxy | grep '"kibana_index":true'    # appels touchant les index .kibana*
-docker compose logs proxy | grep '"auth_scheme":"ldap-runas"'  # logins LDAP réussis (run_as)
+docker compose logs proxy | grep '"security":true'       # calls to the ES security API
+docker compose logs proxy | grep '"kibana_index":true'    # calls touching .kibana* indices
+docker compose logs proxy | grep '"auth_scheme":"ldap-runas"'  # successful LDAP logins (run_as)
 ```
 
-### Appels de sécurité observés
+### Observed security calls
 
-Relevé fait pendant un cycle complet connexion + ouverture de Discover (1 486 appels journalisés au total, dont 318 vers l'API de sécurité et 782 vers des index `.kibana*`) :
+Record taken during a full login + Discover open cycle (1,486 calls logged in total, of which 318 to the security API and 782 to `.kibana*` indices):
 
-| Appel | Fréquence | Rôle probable |
+| Call | Frequency | Likely role |
 | --- | --- | --- |
-| `POST /_security/user/_has_privileges` | très fréquent (148) | Kibana vérifie en continu les droits de l'utilisateur courant avant d'afficher chaque fonctionnalité |
-| `GET /_security/_authenticate` | très fréquent (145) | validation de session à chaque requête de l'UI (« qui suis-je ? ») |
-| `GET /_security/profile/<uid>` | fréquent (16) | profil utilisateur (avatar, nom affiché) |
-| `POST /_security/profile/_activate` | rare (2) | activation du profil utilisateur à la connexion |
-| `DELETE /_security/api_key` | rare (5) | nettoyage de clés d'API internes à Kibana (ex. tâches Fleet/ML) |
-| `GET /_security/api_key` | rare (1) | lecture de clés d'API internes |
-| `GET /_security/privilege/kibana-.kibana` | rare (1) | privilèges applicatifs Kibana sur son propre index |
+| `POST /_security/user/_has_privileges` | very frequent (148) | Kibana continuously checks the current user’s rights before displaying each feature |
+| `GET /_security/_authenticate` | very frequent (145) | session validation on every UI request (“who am I?”) |
+| `GET /_security/profile/<uid>` | frequent (16) | user profile (avatar, display name) |
+| `POST /_security/profile/_activate` | rare (2) | user profile activation at login |
+| `DELETE /_security/api_key` | rare (5) | cleanup of Kibana internal API keys (e.g. Fleet/ML tasks) |
+| `GET /_security/api_key` | rare (1) | reading internal API keys |
+| `GET /_security/privilege/kibana-.kibana` | rare (1) | Kibana application privileges on its own index |
 
-**Constat pour SP-03/F67** : `_has_privileges` et `_authenticate` sont de loin les appels les plus fréquents — toute identité usurpée via `run_as` devra répondre vite à ces deux endpoints, sans quoi l'UI de Kibana devient perceptiblement plus lente. Le reste du trafic (782 appels) touche uniquement des index `.kibana*` (sessions, saved objects, tâches internes, télémétrie) : c'est exactement le périmètre que F67 doit autoriser pour le compte de service `kibana_system`, rien de plus. Le cache LDAP de 2 minutes (`LDAP_CACHE_TTL`) répond à ce constat : sans lui, chaque `_authenticate`/`_has_privileges` déclencherait un bind LDAP.
+**Finding for SP-03/F67**: `_has_privileges` and `_authenticate` are by far the most frequent calls — any identity impersonated via `run_as` will have to answer these two endpoints quickly, otherwise Kibana’s UI becomes perceptibly slower. The rest of the traffic (782 calls) only touches `.kibana*` indices (sessions, saved objects, internal tasks, telemetry): that is exactly the scope F67 must authorize for the `kibana_system` service account, nothing more. The 2-minute LDAP cache (`LDAP_CACHE_TTL`) answers this finding: without it, every `_authenticate`/`_has_privileges` would trigger an LDAP bind.
 
-### Constat d'exécution — `_security/profile/_activate` (SP-03)
+### Runtime finding — `_security/profile/_activate` (SP-03)
 
-Pas prévu dans le plan initial du ticket, trouvé en faisant tourner le spike jusqu'au bout plutôt qu'en s'arrêtant à la théorie : le login d'alice échouait systématiquement en 401, alors que `GET /_security/_authenticate` avec `run_as` fonctionnait très bien.
+Not planned in the ticket’s initial plan, found by running the spike through rather than stopping at theory: alice’s login systematically failed with 401, while `GET /_security/_authenticate` with `run_as` worked fine.
 
-Cause : juste après le login, Kibana appelle `POST /_security/profile/_activate` pour créer/activer le profil utilisateur (avatar, nom affiché). Cet appel est authentifié avec les identifiants de **kibana_system** (donc passe-plat pour le proxy), mais porte le mot de passe tapé par l'utilisateur dans le **corps JSON** (`{"grant_type":"password","username":"alice","password":"alicepass"}`), qu'Elasticsearch vérifie **lui-même** contre son realm natif — pas via le header `Authorization`, donc invisible à la logique `run_as` du proxy. Comme alice n'a pas de realm LDAP côté Elasticsearch (c'est tout le principe de la piste A), son vrai mot de passe LDAP ne correspond à rien côté ES, et la requête échoue avant même que Kibana puisse émettre une session.
+Cause: just after login, Kibana calls `POST /_security/profile/_activate` to create/activate the user profile (avatar, display name). This call is authenticated with **kibana_system** credentials (so passthrough for the proxy), but carries the password typed by the user in the **JSON body** (`{"grant_type":"password","username":"alice","password":"alicepass"}`), which Elasticsearch verifies **itself** against its native realm — not via the `Authorization` header, so invisible to the proxy’s `run_as` logic. Because alice has no LDAP realm on Elasticsearch (that is the whole point of Track A), her real LDAP password matches nothing on ES, and the request fails before Kibana can even issue a session.
 
-Correctif implémenté dans [`proxy/main.go`](proxy/main.go) (`profileActivateMiddleware`) : pour ce point d'entrée précis, et seulement quand le grant vise un utilisateur LDAP (pas un compte de service), le proxy revérifie le mot de passe par LDAP (cache chaud dans la quasi-totalité des cas, puisque `_authenticate` vient de tourner juste avant), puis substitue dans le corps un secret partagé — `NATIVE_SHADOW_PASSWORD` — connu uniquement du proxy et du bootstrap Elasticsearch ([`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh), qui l'utilise comme mot de passe natif d'alice/bob/carol). Ce secret n'est **jamais** tapé par un utilisateur, jamais transmis à LDAP, jamais journalisé.
+Fix implemented in [`proxy/main.go`](proxy/main.go) (`profileActivateMiddleware`): for this precise endpoint, and only when the grant targets an LDAP user (not a service account), the proxy re-checks the password via LDAP (hot cache in almost every case, since `_authenticate` just ran), then substitutes in the body a shared secret — `NATIVE_SHADOW_PASSWORD` — known only to the proxy and the Elasticsearch bootstrap ([`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh), which uses it as the native password of alice/bob/carol). This secret is **never** typed by a user, never sent to LDAP, never logged.
 
-Ce correctif ne change rien au principe de la piste A (LDAP reste la seule source de vérité pour le mot de passe que l'utilisateur tape) ; il comble un angle mort précis de l'intégration Kibana + run_as, qui n'était pas visible dans le relevé des appels de SP-02 (2 appels sur 1 486, facile à manquer sans tester un vrai login bout en bout).
+This fix does not change the principle of Track A (LDAP remains the only source of truth for the password the user types); it fills a precise blind spot of the Kibana + run_as integration, which was not visible in the SP-02 call inventory (2 calls out of 1,486, easy to miss without testing a real end-to-end login).
 
-## Rôles ES et spaces Kibana par équipe (SP-04)
+## ES roles and Kibana spaces per team (SP-04)
 
-Objectif du ticket : un rôle Elasticsearch et un space Kibana par équipe, pour qu'alice (équipe A, viewer) ne lise que les données et le space de son équipe, que bob (équipe A, editor) puisse modifier un dashboard de son équipe, et que carol (équipe B, viewer) ne voie rien de l'équipe A.
+Ticket goal: one Elasticsearch role and one Kibana space per team, so that alice (team A, viewer) only reads her team’s data and space, bob (team A, editor) can modify a dashboard of his team, and carol (team B, viewer) sees nothing of team A.
 
-### Pourquoi deux scripts de bootstrap
+### Why two bootstrap scripts
 
-Les privilèges Kibana (`base: read`/`all`, `spaces`) doivent être posés via l'**API rôles de Kibana** (`PUT /api/security/role/{name}`), pas directement via `PUT /_security/role` d'Elasticsearch : Kibana enregistre lui-même ses privilèges applicatifs (`kibana-.kibana`) à son démarrage, et les spaces n'existent tout simplement pas avant que Kibana ne soit démarré. Le service `setup` existant (SP-01/SP-03) se termine **avant** Kibana (il ne dépend que d'Elasticsearch) : impossible d'y créer les spaces ou les privilèges Kibana.
+Kibana privileges (`base: read`/`all`, `spaces`) must be set via **Kibana’s roles API** (`PUT /api/security/role/{name}`), not directly via Elasticsearch `PUT /_security/role`: Kibana registers its own application privileges (`kibana-.kibana`) at startup, and spaces simply do not exist before Kibana is started. The existing `setup` service (SP-01/SP-03) finishes **before** Kibana (it only depends on Elasticsearch): impossible to create spaces or Kibana privileges there.
 
-Deux scripts, dans l'ordre :
+Two scripts, in order:
 
-1. [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh) (service `setup`, inchangé dans son principe) : crée trois rôles ES **stub** (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`), sans aucun privilège, juste pour qu'alice/bob/carol puissent leur être assignés sans erreur côté Elasticsearch. Remplace les rôles built-in `viewer`/`editor` de SP-03, qui donnaient accès à tous les spaces.
-2. [`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh) (nouveau service `kibana-setup`, démarre seulement une fois Kibana `healthy`) : crée les spaces `equipe-a` et `equipe-b` (`POST`/`PUT /api/spaces/space`), puis réécrit entièrement les trois rôles stub via l'API rôles de Kibana (`elasticsearch.indices` + `kibana.base`/`spaces`), indexe un document de test dans `equipe-a-sample` et `equipe-b-sample` (directement sur Elasticsearch, pour vérifier l'isolation des *données* et pas seulement des objets Kibana), et crée un dashboard minimal dans le space `equipe-a` (`spike-dashboard-equipe-a`).
+1. [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh) (`setup` service, unchanged in principle): creates three ES **stub** roles (`equipe_a_viewer`, `equipe_a_editor`, `equipe_b_viewer`), with no privileges, just so alice/bob/carol can be assigned to them without an Elasticsearch error. Replaces the built-in `viewer`/`editor` roles of SP-03, which gave access to all spaces.
+2. [`scripts/kibana-bootstrap.sh`](scripts/kibana-bootstrap.sh) (new `kibana-setup` service, starts only once Kibana is `healthy`): creates spaces `equipe-a` and `equipe-b` (`POST`/`PUT /api/spaces/space`), then fully rewrites the three stub roles via Kibana’s roles API (`elasticsearch.indices` + `kibana.base`/`spaces`), indexes a test document in `equipe-a-sample` and `equipe-b-sample` (directly on Elasticsearch, to verify isolation of *data* and not only of Kibana objects), and creates a minimal dashboard in space `equipe-a` (`spike-dashboard-equipe-a`).
 
-Entre la fin de `setup` et la fin de `kibana-setup`, alice/bob/carol ont un rôle sans aucun privilège : ils peuvent se connecter mais ne voient aucun space. Fenêtre courte, jugée acceptable pour un spike.
+Between the end of `setup` and the end of `kibana-setup`, alice/bob/carol have a role with no privileges: they can log in but see no space. Short window, judged acceptable for a spike.
 
-Définition des rôles complets (posée par `kibana-bootstrap.sh`) :
+Full role definitions (set by `kibana-bootstrap.sh`):
 
-| Rôle | Index ES (`read`) | Space Kibana | Base Kibana |
+| Role | ES index (`read`) | Kibana space | Kibana base |
 | --- | --- | --- | --- |
 | `equipe_a_viewer` | `equipe-a-*` | `equipe-a` | `read` |
 | `equipe_a_editor` | `equipe-a-*` | `equipe-a` | `all` |
 | `equipe_b_viewer` | `equipe-b-*` | `equipe-b` | `read` |
 
-Editor et viewer de l'équipe A ont les **mêmes** privilèges d'index (lecture) : la différence porte sur les objets Kibana du space (dashboards, etc.), pas sur les données elles-mêmes — c'est le périmètre du critère de réussite (« bob peut modifier un dashboard de A »), pas un droit d'écriture sur les données.
+Team A editor and viewer have the **same** index privileges (read): the difference is on Kibana objects in the space (dashboards, etc.), not on the data itself — that is the scope of the success criterion (“bob can modify a dashboard of A”), not a write right on the data.
 
-### Constat d'exécution — Dev Tools déjà fermé par `base: read` (SP-04)
+### Runtime finding — Dev Tools already closed by `base: read` (SP-04)
 
-Avant d'implémenter, le risque identifié était qu'un rôle `base: ["read"]` laisse Dev Tools visible pour un viewer (les sous-privilèges par sous-fonctionnalité sont une fonction payante, donc pas de moyen fin de le masquer). **Testé réellement** (`POST /api/console/proxy` avec la session d'alice) : Kibana 8.19 refuse déjà cet appel en 403 (« this action is granted by the Kibana privileges [console] ») avec le seul `base: read`, sans configuration `feature` supplémentaire. Pas besoin de personnaliser les privilèges par fonctionnalité pour ce cas précis ; utile aussi pour SP-07 (licence Basic : la restriction Dev Tools ne vient pas d'un palier payant, elle est déjà dans le comportement de base).
+Before implementing, the identified risk was that a `base: ["read"]` role would leave Dev Tools visible for a viewer (per-sub-feature sub-privileges are a paid feature, so no fine-grained way to hide it). **Tested for real** (`POST /api/console/proxy` with alice’s session): Kibana 8.19 already denies this call with 403 (“this action is granted by the Kibana privileges [console]”) with `base: read` alone, without extra `feature` configuration. No need to customize per-feature privileges for this precise case; also useful for SP-07 (Basic license: the Dev Tools restriction does not come from a paid tier, it is already in the base behavior).
 
-### Vérification
+### Verification
 
-[`scripts/verify.sh`](scripts/verify.sh) étend la matrice SP-01 à SP-03 avec, une fois le service `kibana-setup` terminé (vérifié via `docker compose ps --format '{{.State}}' kibana-setup`) :
+[`scripts/verify.sh`](scripts/verify.sh) extends the SP-01 to SP-03 matrix with, once the `kibana-setup` service has finished (checked via `docker compose ps --format '{{.State}}' kibana-setup`):
 
-- alice : `GET /api/spaces/space` contient `equipe-a` et pas `equipe-b` ; lecture du dashboard de A (200) ; tentative d'écriture sur ce même dashboard refusée (403) ; Dev Tools refusé (403) ; recherche sur `equipe-a-sample` via le proxy (200) et sur `equipe-b-sample` refusée (403).
-- bob : connexion Kibana réussie ; écriture réussie (200) sur le dashboard de A.
-- carol : `GET /api/spaces/space` contient seulement `equipe-b` ; accès direct au space `equipe-a` et à son dashboard refusés (403 chacun) ; recherche sur `equipe-a-sample` via le proxy refusée (403), sur `equipe-b-sample` réussie (200).
+- alice: `GET /api/spaces/space` contains `equipe-a` and not `equipe-b`; read of A’s dashboard (200); write attempt on that same dashboard denied (403); Dev Tools denied (403); search on `equipe-a-sample` via the proxy (200) and on `equipe-b-sample` denied (403).
+- bob: Kibana login succeeds; write succeeds (200) on A’s dashboard.
+- carol: `GET /api/spaces/space` contains only `equipe-b`; direct access to space `equipe-a` and its dashboard denied (403 each); search on `equipe-a-sample` via the proxy denied (403), on `equipe-b-sample` succeeds (200).
 
-Exécuté réellement (pas seulement en théorie) : `docker compose up -d` puis `./scripts/verify.sh`, deux fois de suite (`setup`/`kibana-setup` relancés entre les deux) pour vérifier que les deux scripts de bootstrap restent idempotents sans erreur.
+Executed for real (not only in theory): `docker compose up -d` then `./scripts/verify.sh`, twice in a row (`setup`/`kibana-setup` restarted between the two) to verify that both bootstrap scripts stay idempotent without error.
 
-Si un cas de cette matrice échoue, ne pas commencer par regarder le proxy : d'abord `GET /_security/_authenticate` via le proxy (le rôle custom est-il présent ?), puis `POST /_security/user/_has_privileges`, puis le même appel Kibana en session `elastic` pour voir si l'objet existe. Un 401 inattendu dans le journal du proxy indique un problème côté `run_as` ; un 403 côté Kibana ou ES indique un problème de définition de rôle ou de space, pas le proxy.
+If a case in this matrix fails, do not start by looking at the proxy: first `GET /_security/_authenticate` via the proxy (is the custom role present?), then `POST /_security/user/_has_privileges`, then the same Kibana call in an `elastic` session to see if the object exists. An unexpected 401 in the proxy log indicates a `run_as` problem; a 403 on Kibana or ES indicates a role or space definition problem, not the proxy.
 
-### Hors périmètre de SP-04 (prévu en J2)
+### Out of scope for SP-04 (planned in J2)
 
-Pas de configuration YAML source unique, pas de synchronisation générique/idempotente au sens de F74-F77 (l'idempotence testée ici est manuelle, pas garantie par construction), pas de niveau `admin`, pas de mapping automatique des groupes LDAP vers équipe/niveau (F72), pas de détection de divergence (F76), pas de mode simulation (F77). L'affectation alice/bob/carol → rôle reste statique dans `es-bootstrap.sh`, comme en SP-03. Ça arrive en J2-01 (config YAML) et J2-02 (synchro idempotente).
+No single-source YAML configuration, no generic/idempotent sync in the sense of F74-F77 (the idempotence tested here is manual, not guaranteed by construction), no `admin` level, no automatic mapping of LDAP groups to team/level (F72), no divergence detection (F76), no dry-run mode (F77). The alice/bob/carol → role assignment remains static in `es-bootstrap.sh`, as in SP-03. That comes in J2-01 (YAML config) and J2-02 (idempotent sync).
 
-## SP-05 FROM LOOKUP JOIN et ENRICH via le proxy
+## SP-05 FROM LOOKUP JOIN and ENRICH via the proxy
 
-Objectif du ticket : savoir quelles commandes ES|QL référencent d'autres index en 8.19, et la version minimale d'Elasticsearch à retenir pour F27 (vérification des index lus par une requête avant exécution, garde-fou de l'assistant IA).
+Ticket goal: know which ES|QL commands reference other indices in 8.19, and the minimum Elasticsearch version to retain for F27 (verification of indices read by a query before execution, AI assistant guardrail).
 
-### Pourquoi les index de test suivent le pattern `equipe-a-*`/`equipe-b-*`
+### Why the test indices follow the `equipe-a-*`/`equipe-b-*` pattern
 
-Le plan initial du ticket supposait encore le rôle built-in `viewer` d'alice (accès large à tous les index). Entre-temps, SP-04 l'a remplacé par un rôle restreint au pattern `equipe-a-*` (voir plus haut). Avec des index nommés `sp05-*` comme prévu au plan, alice n'aurait pu en lire aucun : le test via son identité LDAP n'aurait rien démontré sur ES|QL lui-même.
+The ticket’s initial plan still assumed alice’s built-in `viewer` role (broad access to all indices). In the meantime, SP-04 replaced it with a role restricted to the `equipe-a-*` pattern (see above). With indices named `sp05-*` as planned, alice would have been able to read none of them: the test via her LDAP identity would have shown nothing about ES|QL itself.
 
-[`scripts/esql-seed.sh`](scripts/esql-seed.sh) crée donc deux jeux d'index, un par équipe :
+[`scripts/esql-seed.sh`](scripts/esql-seed.sh) therefore creates two index sets, one per team:
 
-| Usage | Équipe A (lisible par alice) | Équipe B (pas lisible par alice) |
+| Usage | Team A (readable by alice) | Team B (not readable by alice) |
 | --- | --- | --- |
-| `FROM` | `equipe-a-sp05-logs` | `equipe-b-sp05-logs` (témoin négatif) |
+| `FROM` | `equipe-a-sp05-logs` | `equipe-b-sp05-logs` (negative control) |
 | `LOOKUP JOIN` (`index.mode: lookup`) | `equipe-a-sp05-hosts` | `equipe-b-sp05-hosts` |
-| `ENRICH` (index source + policy) | `equipe-a-sp05-owners` / `sp05-owners-a-policy` | `equipe-b-sp05-owners` / `sp05-owners-b-policy` |
+| `ENRICH` (source index + policy) | `equipe-a-sp05-owners` / `sp05-owners-a-policy` | `equipe-b-sp05-owners` / `sp05-owners-b-policy` |
 
-Ce choix permet de répondre à la vraie question de F27 : est-ce qu'Elasticsearch isole nativement l'index **cible** d'un `LOOKUP JOIN` ou la policy d'un `ENRICH`, au même titre que le `FROM` ? Sans ce test croisé, on n'aurait vérifié que la capacité brute des commandes (avec `elastic`), pas leur comportement de sécurité réel.
+This choice answers F27’s real question: does Elasticsearch natively isolate the **target** index of a `LOOKUP JOIN` or the policy of an `ENRICH`, the same way as `FROM`? Without this cross test, we would only have verified the raw capability of the commands (as `elastic`), not their real security behavior.
 
-### Constat d'exécution — LOOKUP JOIN exige un champ `keyword`
+### Runtime finding — LOOKUP JOIN requires a `keyword` field
 
-Première tentative refusée en 400 pour **tout le monde**, y compris `elastic` (donc sans rapport avec l'ACL) : `verification_exception`, *"JOIN with right field [host] of type [TEXT] is not supported"*. Le champ de jointure `host`, laissé en mapping dynamique, était du `text`. Corrigé en mappant explicitement `host` (et `owner`) en `keyword` dans `esql-seed.sh`.
+First attempt denied with 400 for **everyone**, including `elastic` (so unrelated to the ACL): `verification_exception`, *"JOIN with right field [host] of type [TEXT] is not supported"*. The join field `host`, left to dynamic mapping, was `text`. Fixed by explicitly mapping `host` (and `owner`) as `keyword` in `esql-seed.sh`.
 
-### Exécuter
+### Run
 
 ```sh
-./scripts/esql-seed.sh     # crée les index et policies ci-dessus (relançable)
-./scripts/verify-esql.sh   # joue FROM/LOOKUP JOIN/ENRICH en elastic puis en alice
+./scripts/esql-seed.sh     # creates the indices and policies above (rerunnable)
+./scripts/verify-esql.sh   # plays FROM/LOOKUP JOIN/ENRICH as elastic then as alice
 ```
 
-`verify-esql.sh` n'est volontairement pas un gate pass/fail comme `verify.sh` : certains résultats attendus sont des refus (403), et deux cas sont marqués « constat ouvert » dans la sortie — c'est la vraie question du spike, pas une régression si le résultat n'est pas celui espéré.
+`verify-esql.sh` is deliberately not a pass/fail gate like `verify.sh`: some expected results are denials (403), and two cases are marked “open finding” in the output — that is the spike’s real question, not a regression if the result is not the hoped-for one.
 
-### Résultats
+### Results
 
-| Commande | Référence un index dans le texte ? | ACL native ES sur la cible | Version minimale 8.x utile |
+| Command | References an index in the text? | Native ES ACL on the target | Useful minimum 8.x version |
 | --- | --- | --- | --- |
-| `FROM` | oui (patterns, listes, nom quoté) | oui : liste explicite avec un index non autorisé → `403` ; wildcard élargi (`equipe-*-sp05-logs`) → filtré silencieusement aux index autorisés d'alice, sans erreur et sans fuite constatée | GA depuis 8.14 |
-| `LOOKUP JOIN idx ON champ` | oui, nom d'index exact obligatoire | **oui** : alice refusée (400, « Unknown index ») sur `LOOKUP JOIN equipe-b-sp05-hosts ON host`, alors qu'elastic réussit la même requête | GA en 8.19 (preview en 8.18) |
-| `ENRICH policy` | **non**, seulement un nom de policy | **non**, voir constat majeur ci-dessous | GA depuis les débuts d'ES\|QL, mais insuffisant seul pour F27 |
+| `FROM` | yes (patterns, lists, quoted name) | yes: explicit list with an unauthorized index → `403`; broadened wildcard (`equipe-*-sp05-logs`) → silently filtered to alice’s authorized indices, with no error and no observed leak | GA since 8.14 |
+| `LOOKUP JOIN idx ON field` | yes, exact index name required | **yes**: alice denied (400, “Unknown index”) on `LOOKUP JOIN equipe-b-sp05-hosts ON host`, whereas elastic succeeds on the same query | GA in 8.19 (preview in 8.18) |
+| `ENRICH policy` | **no**, only a policy name | **no**, see major finding below | GA since the early days of ES\|QL, but insufficient alone for F27 |
 
-### Constat d'exécution majeur — ENRICH n'est pas protégé par index source
+### Major runtime finding — ENRICH is not protected by source index
 
-`ENRICH` nécessite uniquement le privilège **cluster** `monitor_enrich`/`manage_enrich` — confirmé par le message d'erreur d'Elasticsearch quand alice (rôle `equipe_a_viewer`, sans ce privilège) tente `ENRICH sp05-owners-a-policy` :
+`ENRICH` only requires the **cluster** privilege `monitor_enrich`/`manage_enrich` — confirmed by Elasticsearch’s error message when alice (role `equipe_a_viewer`, without that privilege) tries `ENRICH sp05-owners-a-policy`:
 
 ```
 action [cluster:monitor/xpack/enrich/esql/resolve_policy] is unauthorized for user [proxy_service]
@@ -196,7 +196,7 @@ run as [alice] with effective roles [equipe_a_viewer], this action is granted by
 privileges [cross_cluster_search,monitor_enrich,manage_enrich,monitor,manage,all]
 ```
 
-Sans ce privilège, `ENRICH` est refusé en bloc, **même pour la policy de sa propre équipe** (403 sur `sp05-owners-a-policy` aussi). Mais le privilège est **cluster-wide**, pas par policy ni par index source : pour tester ce qu'il se passe une fois accordé, un rôle temporaire a été créé et attaché à alice le temps du test, puis retiré :
+Without that privilege, `ENRICH` is denied wholesale, **even for her own team’s policy** (403 on `sp05-owners-a-policy` as well). But the privilege is **cluster-wide**, not per policy or per source index: to test what happens once it is granted, a temporary role was created and attached to alice for the test, then removed:
 
 ```sh
 curl -u "elastic:${ELASTIC_PASSWORD}" -X PUT http://127.0.0.1:9200/_security/role/sp05_monitor_enrich_test \
@@ -207,138 +207,138 @@ curl -u "elastic:${ELASTIC_PASSWORD}" -X PUT http://127.0.0.1:9200/_security/use
   -d '{"roles":["equipe_a_viewer","sp05_monitor_enrich_test"],"full_name":"Alice Martin"}'
 ```
 
-Résultat : `FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host`, exécuté par alice via le proxy, a renvoyé `"owner": "equipe-b-secret"` — la valeur de l'index source de l'équipe **B**, alors qu'alice n'a aucun privilège de lecture sur `equipe-b-sp05-owners` ni `equipe-b-*`. **Fuite inter-équipe confirmée.** Rôle et affectation retirés immédiatement après le test.
+Result: `FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host`, executed by alice via the proxy, returned `"owner": "equipe-b-secret"` — the value from team **B**’s source index, even though alice has no read privilege on `equipe-b-sp05-owners` or `equipe-b-*`. **Cross-team leak confirmed.** Role and assignment removed immediately after the test.
 
-**Conséquence directe pour F27** : `FROM` et `LOOKUP JOIN` sont déjà protégés par l'ACL native d'Elasticsearch (le nom de l'index cible est toujours explicite dans le texte de la requête) ; un parseur qui extrait ces noms (pour l'audit F49 et le refus fail-closed) suffit, sans contrôle d'autorisation supplémentaire côté proxy. `ENRICH` demande un traitement spécifique : le proxy doit résoudre `GET /_enrich/policy/<nom>` pour retrouver l'index source avant d'autoriser l'exécution, et refuser si la policy est inconnue ou si l'index source sort du périmètre de l'utilisateur (fail-closed, F38) — sans quoi accorder `monitor_enrich` à une équipe pour qu'elle utilise `ENRICH` l'expose de fait aux policies de toutes les autres équipes.
+**Direct consequence for F27**: `FROM` and `LOOKUP JOIN` are already protected by Elasticsearch’s native ACL (the target index name is always explicit in the query text); a parser that extracts these names (for audit F49 and fail-closed denial) is enough, with no extra authorization check on the proxy. `ENRICH` needs specific handling: the proxy must resolve `GET /_enrich/policy/<name>` to recover the source index before allowing execution, and deny if the policy is unknown or if the source index is outside the user’s scope (fail-closed, F38) — otherwise granting `monitor_enrich` to a team so it can use `ENRICH` in practice exposes it to every other team’s policies.
 
-**Version minimale d'Elasticsearch retenue** : **8.19** si `LOOKUP JOIN` doit être couvert par F27 en production (GA à cette version, alignée avec le choix déjà fait pour Kibana 8.19). 8.14 suffirait pour `FROM` + `ENRICH` seuls. Pas de `FORK` en 8.19 : seules ces trois commandes lisent d'autres données.
+**Minimum Elasticsearch version retained**: **8.19** if `LOOKUP JOIN` must be covered by F27 in production (GA at that version, aligned with the choice already made for Kibana 8.19). 8.14 would suffice for `FROM` + `ENRICH` only. No `FORK` in 8.19: only these three commands read other data.
 
-### Hors périmètre de SP-05
+### Out of scope for SP-05
 
-Parser F27 (extraction des index, résolution des policies ENRICH, fail-closed), toute modification du proxy (`/_query` traverse déjà le passe-plat existant sans changement, visible dans `docker compose logs proxy | grep '"path":"/_query"'`), et le cluster distant (CCS) — la syntaxe `cluster:index` de `FROM` est documentée mais pas testée avec un vrai cluster remote. Détail du ticket dans [SP-05](../docs/Tickets%20Proxy%20Elasticsearch/SP-05%20ES-QL%20-%20FROM%2C%20LOOKUP%20JOIN%2C%20ENRICH%20via%20proxy.md).
+F27 parser (index extraction, ENRICH policy resolution, fail-closed), any change to the proxy (`/_query` already goes through the existing passthrough unchanged, visible in `docker compose logs proxy | grep '"path":"/_query"'`), and the remote cluster (CCS) — the `cluster:index` syntax of `FROM` is documented but not tested with a real remote cluster. Ticket detail in [SP-05](../docs/Tickets%20Proxy%20Elasticsearch/SP-05%20ES-QL%20-%20FROM%2C%20LOOKUP%20JOIN%2C%20ENRICH%20via%20proxy.md).
 
-## SP-06 Plugin Kibana minimal + jeton court (moteur factice)
+## SP-06 Minimal Kibana plugin + short-lived token (dummy engine)
 
-Objectif du ticket : savoir comment un plugin Kibana obtient un jeton court pour transmettre l'identité de l'utilisateur à un moteur IA, et vérifier que ce jeton porte bien signature, expiration et destinataire vérifiables (F78-F82). Le plan du spike proposait de tester en premier la variante « jeton demandé via Elasticsearch, avec la session de l'utilisateur », avec repli sur un en-tête signé HMAC (F82) si elle échoue.
+Ticket goal: know how a Kibana plugin obtains a short-lived token to pass the user’s identity to an AI engine, and verify that this token carries a verifiable signature, expiration and audience (F78-F82). The spike plan proposed testing first the variant “token requested via Elasticsearch, with the user’s session”, with fallback to an HMAC signed header (F82) if it fails.
 
-### Architecture testée
+### Architecture tested
 
 ```
-alice → plugin (UI) → route serveur Kibana → asCurrentUser → proxy (POST /_spike/identity-token) → JWT RS256
+alice → plugin (UI) → Kibana server route → asCurrentUser → proxy (POST /_spike/identity-token) → JWT RS256
                                                                                                         │
-                                                        plugin relaie le jeton, sans le lire ni le modifier (F80)
+                                                        plugin relays the token, without reading or modifying it (F80)
                                                                                                         ▼
-                                                                                   moteur factice (POST /whoami)
-                                                                                   vérifie signature/exp/aud (F79)
+                                                                                   dummy engine (POST /whoami)
+                                                                                   verifies signature/exp/aud (F79)
 ```
 
-- Le **proxy** ([`proxy/main.go`](proxy/main.go), `mintIdentityTokenMiddleware`) répond lui-même, sans jamais relayer à Elasticsearch, sur `POST /_spike/identity-token` : il émet un JWT RS256 (`iss=spike-proxy`, `aud=spike-engine`, `sub=<utilisateur>`, `groups=<groupes LDAP>`, TTL 5 min) signé avec une clé privée que lui seul détient ([`keys/README.md`](keys/README.md)).
-- Le **moteur factice** ([`engine/`](engine/), nouveau service `engine`) ne détient que la clé **publique** correspondante : il vérifie la méthode de signature (RS256 uniquement), la signature, l'expiration (avec 60 s de tolérance d'horloge) et le destinataire, puis renvoie l'identité portée par le jeton. Aucun appel à Elasticsearch, aucune logique d'assistant IA : ce n'est pas J2-06/J2-07.
-- Le **plugin** ([`kibana-plugin/spike_ask/`](kibana-plugin/)) ne détient aucune clé (F80) : sa route serveur unique (`POST /api/spike_ask/ask`) appelle `/_spike/identity-token` via `context.core.elasticsearch.client.asCurrentUser` (jamais `asInternalUser`, pour que le jeton porte l'identité réelle de l'utilisateur et non celle de `kibana_system`), puis relaie le jeton reçu, verbatim, au moteur.
+- The **proxy** ([`proxy/main.go`](proxy/main.go), `mintIdentityTokenMiddleware`) answers itself, never relaying to Elasticsearch, on `POST /_spike/identity-token`: it issues an RS256 JWT (`iss=spike-proxy`, `aud=spike-engine`, `sub=<user>`, `groups=<LDAP groups>`, TTL 5 min) signed with a private key that only it holds ([`keys/README.md`](keys/README.md)).
+- The **dummy engine** ([`engine/`](engine/), new `engine` service) holds only the matching **public** key: it verifies the signature method (RS256 only), the signature, expiration (with 60 s clock-skew tolerance) and the audience, then returns the identity carried by the token. No call to Elasticsearch, no AI assistant logic: this is not J2-06/J2-07.
+- The **plugin** ([`kibana-plugin/spike_ask/`](kibana-plugin/)) holds no key (F80): its single server route (`POST /api/spike_ask/ask`) calls `/_spike/identity-token` via `context.core.elasticsearch.client.asCurrentUser` (never `asInternalUser`, so the token carries the real user’s identity and not that of `kibana_system`), then relays the received token, verbatim, to the engine.
 
-### Constat d'exécution — deux identités possibles derrière `asCurrentUser`
+### Runtime finding — two possible identities behind `asCurrentUser`
 
-Le proxy doit résoudre un utilisateur avant de minter un jeton, mais `asCurrentUser` peut porter deux formes d'authentification selon le provider Kibana actif :
+The proxy must resolve a user before minting a token, but `asCurrentUser` can carry two forms of authentication depending on the active Kibana provider:
 
-- **Basic LDAP** (le chemin de SP-03/SP-04) : Kibana rejoue le mot de passe d'alice sur chaque appel `asCurrentUser`, déjà intercepté par `authMiddleware` (`run_as`). Le proxy connaît alors l'identité sans appel supplémentaire — c'est le chemin **vérifié par exécution réelle** ci-dessous.
-- **ApiKey/Bearer** (point de vigilance documenté avant exécution) : si jamais rencontré, le proxy introspecte `GET /_security/_authenticate` en relayant l'en-tête d'origine. Ce chemin existe dans le code (`auth_scheme: jwt-mint-apikey`) mais **n'a pas été déclenché** en pratique avec le flux LDAP retenu depuis SP-03 : `docker compose logs proxy | grep jwt-mint` ne montre que `jwt-mint-basic` lors des tests.
+- **Basic LDAP** (the SP-03/SP-04 path): Kibana replays alice’s password on every `asCurrentUser` call, already intercepted by `authMiddleware` (`run_as`). The proxy then knows the identity with no extra call — this is the path **verified by real execution** below.
+- **ApiKey/Bearer** (watch point documented before execution): if ever encountered, the proxy introspects `GET /_security/_authenticate` by relaying the original header. This path exists in the code (`auth_scheme: jwt-mint-apikey`) but **was not triggered** in practice with the LDAP flow retained since SP-03: `docker compose logs proxy | grep jwt-mint` only shows `jwt-mint-basic` during the tests.
 
-### Constat d'exécution — le plugin compile et se charge, contrairement au constat initial
+### Runtime finding — the plugin compiles and loads, contrary to the initial finding
 
-Un premier essai avait conclu que le plugin ne pouvait pas être compilé dans cet environnement (clone bloqué côté réseau, puis hypothèse d'un bootstrap pnpm trop lourd pour les ~4 Go de RAM alloués au moteur Docker, `docker info --format '{{.MemTotal}}'`). **Ce constat était erroné.** Repris depuis zéro, le build complet ([`kibana/Dockerfile`](kibana/Dockerfile), qui suit la procédure officielle d'Elastic : checkout du monorepo `elastic/kibana`, `pnpm kbn bootstrap`, puis `plugin_helpers build`) réussit de bout en bout dans ce même environnement, en ~7-10 min. Les vrais blocages étaient trois bugs précis, pas une limite de ressources :
+A first attempt had concluded that the plugin could not be compiled in this environment (clone blocked on the network, then hypothesis of a pnpm bootstrap too heavy for the ~4 GB of RAM allocated to the Docker engine, `docker info --format '{{.MemTotal}}'`). **That finding was wrong.** Restarted from scratch, the full build ([`kibana/Dockerfile`](kibana/Dockerfile), which follows Elastic’s official procedure: checkout of the `elastic/kibana` monorepo, `pnpm kbn bootstrap`, then `plugin_helpers build`) succeeds end to end in this same environment, in ~7–10 min. The real blockers were three precise bugs, not a resource limit:
 
-1. `kibana.json` sans `owner.name` — requis par le validateur de manifeste Kibana ;
-2. `plugin_helpers build` sans `--kibana-version` déclenche un prompt interactif (`inquirer`) qui plante faute de TTY dans `docker build` (`ERR_USE_AFTER_CLOSE: readline was closed`) ;
-3. la tâche interne `buildWebpackPackages` refuse de tourner en root (« Kibana should not be run as root »), sans flag `--allow-root` propre exposé par `plugin_helpers build` — corrigé en construisant comme l'utilisateur non-root `node` (déjà présent dans l'image `node:*-bookworm`) plutôt qu'en cherchant un contournement supplémentaire.
+1. `kibana.json` without `owner.name` — required by the Kibana manifest validator;
+2. `plugin_helpers build` without `--kibana-version` triggers an interactive prompt (`inquirer`) which crashes for lack of a TTY in `docker build` (`ERR_USE_AFTER_CLOSE: readline was closed`);
+3. the internal `buildWebpackPackages` task refuses to run as root (“Kibana should not be run as root”), with no clean `--allow-root` flag exposed by `plugin_helpers build` — fixed by building as the non-root `node` user (already present in the `node:*-bookworm` image) rather than looking for a further workaround.
 
-Un quatrième correctif, côté **proxy** cette fois (pas le Dockerfile), a été nécessaire pour que la route serveur du plugin fonctionne réellement : le client Elasticsearch officiel utilisé par `asCurrentUser.transport.request` fait un « product check » sur chaque réponse HTTP et rejette (`ProductNotSupportedError`) tout ce qui ne porte pas l'en-tête `X-elastic-product: Elasticsearch` — y compris les réponses 401/403 synthétiques de `POST /_spike/identity-token`, jamais relayées à un vrai Elasticsearch. `mintIdentityTokenMiddleware` pose maintenant cet en-tête sur toutes ses réponses (voir [`proxy/main.go`](proxy/main.go)).
+A fourth fix, on the **proxy** this time (not the Dockerfile), was needed for the plugin’s server route to actually work: the official Elasticsearch client used by `asCurrentUser.transport.request` does a “product check” on every HTTP response and rejects (`ProductNotSupportedError`) anything that does not carry the `X-elastic-product: Elasticsearch` header — including the synthetic 401/403 responses of `POST /_spike/identity-token`, never relayed to a real Elasticsearch. `mintIdentityTokenMiddleware` now sets this header on all its responses (see [`proxy/main.go`](proxy/main.go)).
 
-**Conséquence** : `docker-compose.yml` construit désormais l'image `kibana` depuis [`kibana/Dockerfile`](kibana/Dockerfile) (plugin inclus) au lieu de l'image officielle nue, et le critère de réussite du ticket (« le plugin se charge ») est vérifié par exécution réelle, pas seulement par reproduction `curl` de l'appel `asCurrentUser`.
+**Consequence**: `docker-compose.yml` now builds the `kibana` image from [`kibana/Dockerfile`](kibana/Dockerfile) (plugin included) instead of the bare official image, and the ticket’s success criterion (“the plugin loads”) is verified by real execution, not only by a `curl` reproduction of the `asCurrentUser` call.
 
-### Vérification
+### Verification
 
-[`scripts/verify-sp06.sh`](scripts/verify-sp06.sh), exécuté réellement contre la stack (`docker compose up -d` puis le script, comme les autres SP-0x) :
+[`scripts/verify-sp06.sh`](scripts/verify-sp06.sh), executed for real against the stack (`docker compose up -d` then the script, like the other SP-0x):
 
-| Cas | Résultat |
+| Case | Result |
 | --- | --- |
-| Anonyme sur `POST /_spike/identity-token` | 401 |
-| Compte de service (`elastic`) sur `POST /_spike/identity-token` | 403 (un jeton représente un utilisateur, pas un compte technique) |
-| Alice (Basic LDAP via le proxy) | 200, jeton reçu |
-| Jeton d'alice relayé au moteur (`POST /whoami`) | 200, `sub=alice`, `groups=["equipe-a-viewer"]`, `aud=spike-engine` |
-| **Route du plugin sans cookie** (`POST /api/spike_ask/ask`) | **401, pas 404 : le plugin est bien chargé** |
-| **Route du plugin avec la session Kibana d'alice** (`POST /api/spike_ask/ask`) | **200**, `sub=alice`, `groups=["equipe-a-viewer"]` (via `asCurrentUser` → proxy → moteur) |
-| Jeton expiré (bonne clé, forgé pour le test) | 401 « jeton expiré » |
-| Mauvais destinataire (bonne clé, forgé pour le test) | 401 « destinataire invalide » |
-| Mauvaise signature (forgé avec [`keys/wrong-private.pem`](keys/wrong-private.pem)) | 401 « signature invalide » |
-| Témoin positif (jeton forgé, bons claims, bonne clé) | 200 — confirme que les refus ci-dessus viennent du jeton, pas d'un autre problème |
+| Anonymous on `POST /_spike/identity-token` | 401 |
+| Service account (`elastic`) on `POST /_spike/identity-token` | 403 (a token represents a user, not a technical account) |
+| Alice (Basic LDAP via the proxy) | 200, token received |
+| Alice’s token relayed to the engine (`POST /whoami`) | 200, `sub=alice`, `groups=["equipe-a-viewer"]`, `aud=spike-engine` |
+| **Plugin route without cookie** (`POST /api/spike_ask/ask`) | **401, not 404: the plugin is loaded** |
+| **Plugin route with alice’s Kibana session** (`POST /api/spike_ask/ask`) | **200**, `sub=alice`, `groups=["equipe-a-viewer"]` (via `asCurrentUser` → proxy → engine) |
+| Expired token (good key, forged for the test) | 401 “expired token” |
+| Wrong audience (good key, forged for the test) | 401 “invalid audience” |
+| Bad signature (forged with [`keys/wrong-private.pem`](keys/wrong-private.pem)) | 401 “invalid signature” |
+| Positive control (forged token, good claims, good key) | 200 — confirms that the denials above come from the token, not from another problem |
 
-**Critère de réussite du ticket pleinement atteint** : signature, expiration, destinataire tous vérifiés par exécution réelle (succès et échecs), **et** le plugin Kibana lui-même se charge et sert l'identité réelle d'alice de bout en bout.
+**Ticket success criterion fully met**: signature, expiration, audience all verified by real execution (successes and failures), **and** the Kibana plugin itself loads and serves alice’s real identity end to end.
 
-### Hors périmètre de SP-06
+### Out of scope for SP-06
 
-Page « Ask » réelle avec question en langage naturel et lien Discover (F39/F41, J2-05/J2-06), rotation des clés de signature (F81, J2-03), en-tête HMAC de repli (F82, J2-04 — pas nécessaire ici puisque la variante jeton via Elasticsearch fonctionne). La licence Kibana vs proxy est le constat de [SP-07](#sp-07-licence-kibana-vs-proxy).
+Real “Ask” page with a natural-language question and Discover link (F39/F41, J2-05/J2-06), signing-key rotation (F81, J2-03), HMAC fallback header (F82, J2-04 — not needed here since the token-via-Elasticsearch variant works). The Kibana license vs proxy is the finding of [SP-07](#kibana-license-vs-proxy-sp-07).
 
-## Licence Kibana vs proxy (SP-07)
+## Kibana license vs proxy (SP-07)
 
-Constat du 2026-10-29, stack réellement lancée (`docker.elastic.co` 8.19.23, `xpack.license.self_generated.type=basic` dans [`docker-compose.yml`](docker-compose.yml)). Aucun code modifié. Ce n'est pas un avis juridique.
+Finding of 2026-10-29, stack actually started (`docker.elastic.co` 8.19.23, `xpack.license.self_generated.type=basic` in [`docker-compose.yml`](docker-compose.yml)). No code modified. This is not a legal opinion.
 
-### Ce que dit Elastic
+### What Elastic says
 
-- [Elastic License 2.0](https://github.com/elastic/elasticsearch/blob/main/licenses/ELASTIC-LICENSE-2.0.txt) et [FAQ ELv2](https://www.elastic.co/licensing/elastic-license/faq) : usage, modification et redistribution sont permis, avec trois limites. La deuxième interdit de déplacer, modifier, désactiver ou contourner la fonctionnalité de clé de licence, et d'ôter ou masquer une fonctionnalité protégée par cette clé.
-- [Abonnements self-managed](https://www.elastic.co/subscriptions), colonne Basic : contrôle d'accès par rôle, authentification fichier et native, **Kibana Spaces**, **Kibana feature controls**. Payants : sous-privilèges Kibana (note 8, administration des sous-fonctionnalités), LDAP/AD/PKI, SSO, audit Elasticsearch et Kibana, sécurité par champ et par document.
-- [Privilèges Kibana 8.19](https://www.elastic.co/guide/en/kibana/8.19/kibana-privileges.html) : `base`, `feature` et `spaces` sont le modèle utilisé par SP-04 ; le niveau sous-fonctionnalité est décrit comme une fonction d'abonnement.
+- [Elastic License 2.0](https://github.com/elastic/elasticsearch/blob/main/licenses/ELASTIC-LICENSE-2.0.txt) and [ELv2 FAQ](https://www.elastic.co/licensing/elastic-license/faq): use, modification and redistribution are allowed, with three limits. The second forbids moving, modifying, disabling or circumventing the license-key functionality, and removing or hiding a feature protected by that key.
+- [Self-managed subscriptions](https://www.elastic.co/subscriptions), Basic column: role-based access control, file and native authentication, **Kibana Spaces**, **Kibana feature controls**. Paid: Kibana sub-privileges (note 8, sub-feature administration), LDAP/AD/PKI, SSO, Elasticsearch and Kibana audit, field-level and document-level security.
+- [Kibana 8.19 privileges](https://www.elastic.co/guide/en/kibana/8.19/kibana-privileges.html): `base`, `feature` and `spaces` are the model used by SP-04; the sub-feature level is described as a subscription feature.
 
-| Besoin du MVP | Palier Elastic | Dans ce spike |
+| MVP requirement | Elastic tier | In this spike |
 | --- | --- | --- |
-| Spaces, rôles, `base` read/all (F70–F75) | Basic | Déjà démontré en SP-04 (`verify.sh` : alice ne voit que `equipe-a`) |
-| Masquer Dev Tools par sous-privilège | Payant, et inutile | SP-04 : `base: ["read"]` refuse déjà Dev Tools (403) |
-| Realm LDAP/AD/OIDC, audit natif, FLS/DLS | Payant | Non configurés ; le LDAP du proxy n'active pas le realm LDAP d'ES |
+| Spaces, roles, `base` read/all (F70–F75) | Basic | Already demonstrated in SP-04 (`verify.sh`: alice only sees `equipe-a`) |
+| Hide Dev Tools by sub-privilege | Paid, and unnecessary | SP-04: `base: ["read"]` already denies Dev Tools (403) |
+| LDAP/AD/OIDC realm, native audit, FLS/DLS | Paid | Not configured; the proxy’s LDAP does not enable ES’s LDAP realm |
 
-Le montage retenu (LDAP dans le proxy, users natifs, `run_as`) utilise des primitives Basic. Ce n'est pas le realm LDAP d'Elasticsearch sans licence. Forger une licence Platinum, patcher Kibana/ES, ou réécrire `/_license` pour simuler un palier supérieur serait un contournement ELv2 : le proxy ne le fait pas. Le code du proxy reste Apache-2.0 ; Kibana et l'image officielle restent sous ELv2. La publication du plugin (compilation contre le monorepo Kibana) reste la zone grise déjà notée dans les besoins, à trancher avant une première publication, pas ici.
+The chosen setup (LDAP in the proxy, native users, `run_as`) uses Basic primitives. It is not Elasticsearch’s LDAP realm without a license. Forging a Platinum license, patching Kibana/ES, or rewriting `/_license` to simulate a higher tier would be an ELv2 circumvention: the proxy does not do that. The proxy code stays Apache-2.0; Kibana and the official image stay under ELv2. Publication of the plugin (compilation against the Kibana monorepo) remains the grey area already noted in the requirements, to settle before a first publication, not here.
 
-### Contrôles (2026-10-29)
+### Checks (2026-10-29)
 
-Mot de passe `elastic` : celui de `.env` (`ElasticPass123` dans [`.env.example`](.env.example)).
+`elastic` password: that of `.env` (`ElasticPass123` in [`.env.example`](.env.example)).
 
 ```sh
-# Corps identiques, type basic, status active, même uid
+# Identical bodies, type basic, status active, same uid
 curl -s -u elastic:$ELASTIC_PASSWORD http://127.0.0.1:9200/_license
 curl -s -u elastic:$ELASTIC_PASSWORD http://127.0.0.1:9210/_license
-# GET /_xpack : mêmes corps (security available, graph/watcher/ml non available)
+# GET /_xpack : same bodies (security available, graph/watcher/ml not available)
 ```
 
-| Contrôle | Résultat |
+| Check | Result |
 | --- | --- |
-| `GET /_license` direct (9200) vs proxy (9210) | JSON **identique** : `type=basic`, `status=active`, `uid=0a69a491-63bd-450b-9e02-24993d20cb6a` |
-| `GET /_xpack` direct vs proxy | Corps **identiques** ; `security` disponible, `graph` / `watcher` / `ml` non |
-| Kibana `GET /api/licensing/info` (session `elastic`) | Même uid, `type=basic`, `mode=basic`, `status=active` |
-| `GET /_security/_authenticate` en `elastic` | Realm `reserved` en direct et via le proxy |
-| Même appel en `alice` via le proxy | Realm **`default_native`** (le `run_as` de SP-03), pas un realm `ldap` |
-| `GET /api/spaces/space` session alice | `['equipe-a']` seulement (rappel SP-04, pas rejoué en entier) |
-| `PUT /_security/role/sp07_fls_test` avec `field_security` | **403 identique** direct et proxy : `current license is non-compliant for [field and document level security]` |
+| `GET /_license` direct (9200) vs proxy (9210) | **identical** JSON: `type=basic`, `status=active`, `uid=0a69a491-63bd-450b-9e02-24993d20cb6a` |
+| `GET /_xpack` direct vs proxy | **identical** bodies; `security` available, `graph` / `watcher` / `ml` not |
+| Kibana `GET /api/licensing/info` (`elastic` session) | Same uid, `type=basic`, `mode=basic`, `status=active` |
+| `GET /_security/_authenticate` as `elastic` | Realm `reserved` direct and via the proxy |
+| Same call as `alice` via the proxy | Realm **`default_native`** (SP-03 `run_as`), not an `ldap` realm |
+| `GET /api/spaces/space` alice session | `['equipe-a']` only (SP-04 reminder, not fully replayed) |
+| `PUT /_security/role/sp07_fls_test` with `field_security` | **identical 403** direct and proxy: `current license is non-compliant for [field and document level security]` |
 
-Nuance, pas un contournement : `PUT /api/security/role` a accepté (204) puis stocké `dashboard: ["read","url_create"]` et `discover: ["read","generate_report"]` sous cette licence Basic. Les deux rôles de test ont été supprimés aussitôt. L'API Kibana n'a donc pas refusé l'écriture de ces sous-privilèges ; le spike n'a pas vérifié s'ils sont honorés à l'usage. Ça ne change pas le refus Platinum côté Elasticsearch (FLS), ni le besoin F75 : Dev Tools est déjà fermé par `base: read` (SP-04).
+Nuance, not a bypass: `PUT /api/security/role` accepted (204) then stored `dashboard: ["read","url_create"]` and `discover: ["read","generate_report"]` under this Basic license. Both test roles were deleted immediately. Kibana’s API therefore did not refuse writing these sub-privileges; the spike did not verify whether they are honored in use. That does not change the Platinum denial on the Elasticsearch side (FLS), nor requirement F75: Dev Tools is already closed by `base: read` (SP-04).
 
-**Décision** : F70–F75 (spaces, rôles, feature controls `base`/`feature`) restent sur le palier Basic. Le proxy LDAP + `run_as` ne contourne pas la vérification de licence. LDAP, SSO et audit **natifs** Elastic restent payants et hors produit.
+**Decision**: F70–F75 (spaces, roles, `base`/`feature` feature controls) stay on the Basic tier. The LDAP proxy + `run_as` does not bypass license verification. **Native** Elastic LDAP, SSO and audit remain paid and out of product.
 
-## Limites connues (acceptées pour un spike de 0,5 j)
+## Known limitations (accepted for a 0.5 d spike)
 
-- **Image OpenLDAP** : `osixia/openldap:1.5.0`, pas `bitnami/openldap`. Bitnami a retiré ses images gratuites de Docker Hub en 2025 (`docker.io/bitnami/openldap:2.6` introuvable au moment du spike, voir [bitnami/containers#83267](https://github.com/bitnami/containers/issues/83267)) ; `osixia/openldap` reste tirable et très utilisé, mais en maintenance réduite. À réévaluer avant J1 (construire sa propre image `slapd` au besoin).
-- **Pas de TLS** entre Kibana et Elasticsearch, et LDAP en clair (pas LDAPS). Simplifie le proxy transparent de SP-02 ; à corriger avant toute vraie exploitation (F5, F68).
-- **Un seul nœud** Elasticsearch, licence `basic` auto-générée (confirmé en SP-07 : le proxy ne la modifie pas).
-- **Pas d'ACL** : tout utilisateur LDAP authentifié peut appeler n'importe quel index via le proxy, avec les droits de son rôle ES (par équipe depuis SP-04, mais statique et non dérivé d'une politique déclarative). L'ACL arrive au jalon J1 (F14).
-- **Pas de YAML ni de synchro générique pour les rôles/spaces** : depuis SP-04, les rôles et spaces par équipe existent (F70-F75 validés par exécution réelle), mais l'affectation utilisateur → rôle reste statique dans `es-bootstrap.sh` (pas de mapping groupes LDAP → équipe/niveau, F72), et il n'y a ni source YAML unique, ni détection de divergence (F76), ni mode simulation (F77). Ça arrive en J2-01/J2-02.
-- **Pas de limitation des tentatives de connexion** (brute force, F8), ni de timeouts/pool de connexions LDAP dédiés (F10) : un seul bind à la fois, délai par défaut du client `go-ldap`.
-- **`go.sum` non committé** ([`proxy/Dockerfile`](proxy/Dockerfile)) : `go mod tidy` résout `github.com/go-ldap/ldap/v3` à la construction de l'image, ce qui demande un accès réseau à `docker compose build` et n'est pas reproductible à l'octet près. Acceptable pour un spike, à corriger avant J1 (committer `go.sum`, vendoring ou miroir de modules).
-- **Index de données minimal** : `equipe-a-sample`/`equipe-b-sample` n'ont qu'un document de test chacun (SP-04), juste pour vérifier l'isolation par équipe ; pas un vrai jeu de données.
-- **ENRICH non protégé par index source (SP-05)** : confirmé par exécution réelle, voir [SP-05](#sp-05-from-lookup-join-et-enrich-via-le-proxy). F27 doit résoudre la policy vers son index source avant d'autoriser l'exécution ; ni le proxy actuel ni Elasticsearch ne le font nativement.
-- **Index de test SP-05 non nettoyés par `docker compose down -v`** : `equipe-*-sp05-*` et les policies `sp05-owners-*-policy` sont créés par [`scripts/esql-seed.sh`](scripts/esql-seed.sh) directement sur Elasticsearch ; ils disparaissent avec le volume `esdata` comme le reste, mais ne sont pas recréés automatiquement par `docker compose up` (relancer `esql-seed.sh` à la main si besoin).
-- **Build du plugin Kibana lent** (~7-10 min) : le `docker-compose.yml` de ce spike construit désormais `kibana` depuis [`kibana/Dockerfile`](kibana/Dockerfile) (plugin [`kibana-plugin/`](kibana-plugin/) inclus, voir le constat SP-06), ce qui allonge un `docker compose up --build` par rapport à l'image officielle nue. Acceptable pour un spike ; à mettre en cache (registre d'images, CI) avant une vraie exploitation.
-- **Chemin ApiKey/Bearer du jeton court non démontré (SP-06)** : le code du proxy sait introspecter `GET /_security/_authenticate` pour un utilisateur authentifié par ApiKey plutôt que par Basic LDAP, mais ce chemin n'a jamais été déclenché en pratique (Kibana rejoue systématiquement un Basic auth avec le flux LDAP retenu depuis SP-03) ; il reste écrit mais non exercé par les tests réels.
-- **Pas de rotation des clés de signature (F81)** : une seule paire de clés RSA pour tout le spike ([`keys/`](keys/)). La rotation sans interruption de service est le périmètre de J2-03.
+- **OpenLDAP image**: `osixia/openldap:1.5.0`, not `bitnami/openldap`. Bitnami withdrew its free images from Docker Hub in 2025 (`docker.io/bitnami/openldap:2.6` not found at the time of the spike, see [bitnami/containers#83267](https://github.com/bitnami/containers/issues/83267)); `osixia/openldap` remains pullable and widely used, but on reduced maintenance. Reassess before J1 (build a custom `slapd` image if needed).
+- **No TLS** between Kibana and Elasticsearch, and plaintext LDAP (not LDAPS). Simplifies the transparent proxy of SP-02; to fix before any real use (F5, F68).
+- **Single node** Elasticsearch, auto-generated `basic` license (confirmed in SP-07: the proxy does not modify it).
+- **No ACL**: any authenticated LDAP user can call any index via the proxy, with the rights of their ES role (per team since SP-04, but static and not derived from a declarative policy). The ACL arrives at milestone J1 (F14).
+- **No YAML and no generic sync for roles/spaces**: since SP-04, per-team roles and spaces exist (F70-F75 validated by real execution), but the user → role assignment remains static in `es-bootstrap.sh` (no LDAP groups → team/level mapping, F72), and there is neither a single YAML source, nor divergence detection (F76), nor dry-run mode (F77). That comes in J2-01/J2-02.
+- **No login-attempt limiting** (brute force, F8), nor dedicated LDAP timeouts/connection pool (F10): one bind at a time, default timeout of the `go-ldap` client.
+- **`go.sum` not committed** ([`proxy/Dockerfile`](proxy/Dockerfile)): `go mod tidy` resolves `github.com/go-ldap/ldap/v3` at image build, which requires network access at `docker compose build` and is not byte-for-byte reproducible. Acceptable for a spike, to fix before J1 (commit `go.sum`, vendoring or a module mirror).
+- **Minimal data index**: `equipe-a-sample`/`equipe-b-sample` have only one test document each (SP-04), just to verify isolation per team; not a real dataset.
+- **ENRICH not protected by source index (SP-05)**: confirmed by real execution, see [SP-05](#sp-05-from-lookup-join-and-enrich-via-the-proxy). F27 must resolve the policy to its source index before allowing execution; neither the current proxy nor Elasticsearch does this natively.
+- **SP-05 test indices not cleaned by `docker compose down -v`**: `equipe-*-sp05-*` and the `sp05-owners-*-policy` policies are created by [`scripts/esql-seed.sh`](scripts/esql-seed.sh) directly on Elasticsearch; they disappear with the `esdata` volume like the rest, but are not recreated automatically by `docker compose up` (rerun `esql-seed.sh` by hand if needed).
+- **Slow Kibana plugin build** (~7–10 min): this spike’s `docker-compose.yml` now builds `kibana` from [`kibana/Dockerfile`](kibana/Dockerfile) (plugin [`kibana-plugin/`](kibana-plugin/) included, see the SP-06 finding), which lengthens a `docker compose up --build` compared to the bare official image. Acceptable for a spike; cache it (image registry, CI) before real use.
+- **ApiKey/Bearer path of the short-lived token not demonstrated (SP-06)**: the proxy code can introspect `GET /_security/_authenticate` for a user authenticated by ApiKey rather than Basic LDAP, but this path was never triggered in practice (Kibana systematically replays Basic auth with the LDAP flow retained since SP-03); it remains written but not exercised by the real tests.
+- **No signing-key rotation (F81)**: a single RSA key pair for the whole spike ([`keys/`](keys/)). Rotation without service interruption is the scope of J2-03.
 
-## Arrêter / nettoyer
+## Stop / clean up
 
 ```sh
-docker compose down -v   # supprime aussi les volumes (données ES, Kibana, LDAP)
+docker compose down -v   # also deletes the volumes (ES, Kibana, LDAP data)
 ```

@@ -1,8 +1,8 @@
 import { schema, type TypeOf } from '@kbn/config-schema';
 
-// Config minimale du spike : où joindre le moteur factice. Pas de clé ici
-// (F80 : le plugin ne détient aucun secret de signature) — seulement une
-// URL interne au réseau docker-compose.
+// Minimal spike config: where to reach the dummy engine. No key here
+// (F80: the plugin holds no signing secret) — only a
+// URL internal to the docker-compose network.
 export const configSchema = schema.object({
   engineUrl: schema.string({ defaultValue: 'http://engine:8080' }),
 });

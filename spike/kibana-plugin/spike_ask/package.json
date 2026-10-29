@@ -2,7 +2,7 @@
   "name": "spike_ask",
   "version": "1.0.0",
   "private": true,
-  "description": "SP-06 : plugin Kibana minimal, relaie un jeton court du proxy vers un moteur factice (F39-F41, F78-F82). Jetable, pas un vrai plugin produit.",
+  "description": "SP-06: minimal Kibana plugin, relays a short-lived token from the proxy to a dummy engine (F39-F41, F78-F82). Throwaway, not a product plugin.",
   "kibana": {
     "version": "kibana"
   },

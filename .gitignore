@@ -1,4 +1,4 @@
-# Secrets locaux du spike (jamais commit) — copier spike/.env.example vers spike/.env
+# Local spike secrets (never commit) — copy spike/.env.example to spike/.env
 spike/.env
 
 docs/

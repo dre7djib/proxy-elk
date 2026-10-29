@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
 import type { AppMountParameters, CoreSetup } from '@kbn/core/public';
 
-// Composant unique de la page "Spike Ask" : un bouton qui appelle la route
-// serveur du plugin (POST /api/spike_ask/ask) et affiche le JSON renvoyé par
-// le moteur factice (identité vérifiée : sub, groups, exp) ou l'erreur. Pas
-// d'EUI ici volontairement : le spike teste le chemin du jeton, pas l'UI.
+// Single component of the "Spike Ask" page: a button that calls the plugin's
+// server route (POST /api/spike_ask/ask) and displays the JSON returned by
+// the dummy engine (verified identity: sub, groups, exp) or the error. No
+// EUI here on purpose: the spike tests the token path, not the UI.
 const SpikeAskApp: React.FC<{ http: CoreSetup['http'] }> = ({ http }) => {
-  const [result, setResult] = useState<string>('(pas encore appelé)');
+  const [result, setResult] = useState<string>('(not called yet)');
   const [loading, setLoading] = useState(false);
 
   const callEngine = async () => {
@@ -16,7 +16,7 @@ const SpikeAskApp: React.FC<{ http: CoreSetup['http'] }> = ({ http }) => {
       const body = await http.post('/api/spike_ask/ask', { body: JSON.stringify({}) });
       setResult(JSON.stringify(body, null, 2));
     } catch (err: unknown) {
-      setResult(`Erreur: ${err instanceof Error ? err.message : String(err)}`);
+      setResult(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -26,11 +26,11 @@ const SpikeAskApp: React.FC<{ http: CoreSetup['http'] }> = ({ http }) => {
     <div style={{ padding: 16 }}>
       <h1>Spike Ask (SP-06)</h1>
       <p>
-        Appelle le moteur factice via le jeton court émis par le proxy (variante : jeton demandé à
-        travers Elasticsearch, avec la session de l&apos;utilisateur courant).
+        Calls the dummy engine via the short-lived token issued by the proxy (variant: token requested
+        through Elasticsearch, with the current user&apos;s session).
       </p>
       <button onClick={callEngine} disabled={loading}>
-        {loading ? 'Appel en cours…' : 'Appeler le moteur'}
+        {loading ? 'Calling…' : 'Call the engine'}
       </button>
       <pre style={{ marginTop: 16, background: '#f5f5f5', padding: 12 }}>{result}</pre>
     </div>

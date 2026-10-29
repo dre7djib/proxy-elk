@@ -1,11 +1,11 @@
-// Moteur factice du spike SP-06 (F78-F82) : un processus HTTP minimal,
-// séparé du proxy (c'est tout l'intérêt de l'architecture décidée dans le
-// plan du spike — le proxy émet, le moteur vérifie, avec des clés
-// différentes). Une seule route utile, POST /whoami : vérifie le jeton
-// court (signature RS256, expiration, destinataire) et renvoie l'identité
-// qu'il porte. Pas d'appel à Elasticsearch, pas de question en langage
-// naturel : ce n'est pas l'assistant IA (J2-06/J2-07), seulement le
-// vérificateur de jeton que SP-06 doit valider. Code jetable, pas de tests.
+// Dummy engine for spike SP-06 (F78-F82): a minimal HTTP process,
+// separate from the proxy (that is the whole point of the architecture decided in the
+// spike plan — the proxy issues, the engine verifies, with different
+// keys). A single useful route, POST /whoami: verifies the short-lived
+// token (RS256 signature, expiration, audience) and returns the identity
+// it carries. No call to Elasticsearch, no natural-language
+// question: this is not the AI assistant (J2-06/J2-07), only the
+// token verifier that SP-06 must validate. Throwaway code, no tests.
 package main
 
 import (
@@ -21,9 +21,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// whoamiResponse est ce que le moteur renvoie une fois le jeton vérifié :
-// l'identité qu'il porte, pas plus (F79 : signature, expiration,
-// destinataire — pas d'autorisation par groupe dans ce spike).
+// whoamiResponse is what the engine returns once the token is verified:
+// the identity it carries, nothing more (F79: signature, expiration,
+// audience — no group-based authorization in this spike).
 type whoamiResponse struct {
 	Subject   string   `json:"sub"`
 	Groups    []string `json:"groups"`
@@ -35,7 +35,7 @@ type whoamiResponse struct {
 
 type verifyError struct {
 	StatusCode int
-	Reason     string // valeur courte, journalisée et renvoyée au client
+	Reason     string // short value, logged and returned to the client
 }
 
 func (e *verifyError) Error() string { return e.Reason }
@@ -48,7 +48,7 @@ func main() {
 
 	publicKey, err := loadRSAPublicKey(publicKeyPath)
 	if err != nil {
-		log.Fatalf("clé publique JWT invalide (SP-06, F79): %v", err)
+		log.Fatalf("invalid JWT public key (SP-06, F79): %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -58,22 +58,22 @@ func main() {
 	})
 	mux.HandleFunc("/whoami", whoamiHandler(publicKey, audience, clockSkew))
 
-	log.Printf("moteur factice SP-06 : écoute sur %s, audience attendue %q, clé publique %s, tolérance d'horloge %s",
+	log.Printf("dummy engine SP-06: listening on %s, expected audience %q, public key %s, clock skew %s",
 		listenAddr, audience, publicKeyPath, clockSkew)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// whoamiHandler vérifie le jeton court (F79) : méthode de signature RS256
-// uniquement (pas de confusion d'algorithme), signature, expiration avec
-// tolérance d'horloge configurable, et destinataire (`aud`) égal à ce
-// moteur. Aucune autre vérification : ni rôle, ni ACL, ni appel réseau — un
-// moteur factice ne fait que ça.
+// whoamiHandler verifies the short-lived token (F79): RS256 signature
+// method only (no algorithm confusion), signature, expiration with
+// configurable clock skew, and audience (`aud`) equal to this
+// engine. No other check: no role, no ACL, no network call — a
+// dummy engine does only that.
 func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			respondError(w, &verifyError{http.StatusMethodNotAllowed, "méthode non supportée, POST attendu"})
+			respondError(w, &verifyError{http.StatusMethodNotAllowed, "method not supported, POST expected"})
 			return
 		}
 
@@ -94,7 +94,7 @@ func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http
 		)
 		if err != nil {
 			reason := classifyJWTError(err)
-			log.Printf("jeton refusé (SP-06, F79): %s", reason)
+			log.Printf("token denied (SP-06, F79): %s", reason)
 			respondError(w, &verifyError{http.StatusUnauthorized, reason})
 			return
 		}
@@ -112,7 +112,7 @@ func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http
 			resp.IssuedAt = iat.Unix()
 		}
 
-		log.Printf("jeton accepté (SP-06, F79): sub=%s groups=%v", resp.Subject, resp.Groups)
+		log.Printf("token accepted (SP-06, F79): sub=%s groups=%v", resp.Subject, resp.Groups)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -120,40 +120,40 @@ func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http
 	}
 }
 
-// classifyJWTError traduit les erreurs de la librairie jwt/v5 en motifs de
-// refus lisibles (F79 : signature, expiration ou destinataire). Le détail
-// exact de l'erreur reste dans les logs du moteur (jamais renvoyé au
-// client ci-dessus que sous une forme résumée, pour ne pas donner d'indice
-// inutile à un attaquant).
+// classifyJWTError translates jwt/v5 library errors into readable
+// denial reasons (F79: signature, expiration or audience). The exact
+// error detail stays in the engine logs (never returned to the
+// client above except in summarized form, so as not to give
+// a useful hint to an attacker).
 func classifyJWTError(err error) string {
 	switch {
 	case errors.Is(err, jwt.ErrTokenExpired):
-		return "jeton expiré"
+		return "token expired"
 	case errors.Is(err, jwt.ErrTokenInvalidAudience):
-		return "destinataire invalide"
+		return "invalid audience"
 	case errors.Is(err, jwt.ErrTokenSignatureInvalid):
-		return "signature invalide"
+		return "invalid signature"
 	case errors.Is(err, jwt.ErrTokenMalformed):
-		return "jeton malformé"
+		return "malformed token"
 	case errors.Is(err, jwt.ErrTokenUsedBeforeIssued), errors.Is(err, jwt.ErrTokenNotValidYet):
-		return "jeton pas encore valide"
+		return "token not yet valid"
 	default:
-		return "jeton invalide"
+		return "invalid token"
 	}
 }
 
 func bearerToken(r *http.Request) (string, error) {
 	header := r.Header.Get("Authorization")
 	if header == "" {
-		return "", errors.New("en-tête Authorization manquant")
+		return "", errors.New("missing Authorization header")
 	}
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {
-		return "", errors.New("schéma d'authentification attendu: Bearer")
+		return "", errors.New("expected authentication scheme: Bearer")
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(header, prefix))
 	if token == "" {
-		return "", errors.New("jeton vide")
+		return "", errors.New("empty token")
 	}
 	return token, nil
 }
@@ -193,17 +193,17 @@ func getenv(key, fallback string) string {
 func parseDuration(s string) time.Duration {
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		log.Printf("durée invalide %q, repli sur 60s: %v", s, err)
+		log.Printf("invalid duration %q, falling back to 60s: %v", s, err)
 		return 60 * time.Second
 	}
 	return d
 }
 
 func init() {
-	// Message d'amorçage explicite si la clé publique attendue est absente,
-	// plus parlant qu'une erreur générique de lecture de fichier au
-	// démarrage (voir loadRSAPublicKey dans keys.go).
+	// Explicit bootstrap message if the expected public key is missing,
+	// more informative than a generic file-read error at
+	// startup (see loadRSAPublicKey in keys.go).
 	if _, err := os.Stat(getenv("JWT_PUBLIC_KEY_PATH", "/keys/public.pem")); err != nil {
-		fmt.Fprintln(os.Stderr, "avertissement: clé publique JWT pas encore présente, vérifiée au démarrage réel")
+		fmt.Fprintln(os.Stderr, "warning: JWT public key not yet present, checked at actual startup")
 	}
 }

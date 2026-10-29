@@ -1,4 +1,4 @@
-// Contrats de plugin volontairement vides : SP-06 n'expose rien à d'autres
-// plugins, c'est un spike autonome (F39-F41 réels = J2-05, hors périmètre).
+// Plugin contracts intentionally empty: SP-06 exposes nothing to other
+// plugins; it is a standalone spike (real F39-F41 = J2-05, out of scope).
 export type SpikeAskPluginSetup = Record<string, never>;
 export type SpikeAskPluginStart = Record<string, never>;
