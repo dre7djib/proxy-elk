@@ -1,7 +1,10 @@
 // Package config loads YAML configuration and resolves secret references.
 package config
 
-import "proxy/internal/acl"
+import (
+	"proxy/internal/acl"
+	"proxy/internal/limits"
+)
 
 // Config is the process configuration. Secret fields hold resolved values.
 type Config struct {
@@ -11,9 +14,19 @@ type Config struct {
 	LDAP          LDAP          `yaml:"ldap" json:"ldap"`
 	JWT           JWT           `yaml:"jwt" json:"jwt"`
 	ACL           ACL           `yaml:"acl" json:"acl"`
+	Limits        Limits        `yaml:"limits" json:"limits"`
 	Session       Session       `yaml:"session" json:"session"`
 
 	secrets secretSet
+}
+
+// Limits is the optional per-role quota section (F25): absent (Default
+// nil and Roles empty) means no plafond at all, same as today. Roles
+// matches the caller's groups against a quota; Default applies when no
+// role matches. See internal/limits for how they're combined.
+type Limits struct {
+	Default *limits.Role  `yaml:"default" json:"default"`
+	Roles   []limits.Role `yaml:"roles" json:"roles"`
 }
 
 // ACL is the declarative, read-only access policy (F14/F19): a non-empty

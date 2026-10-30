@@ -46,6 +46,19 @@ acl:
       indices: [equipe-b-*]
       actions: [read]
 
+# Limites par rôle (F25) : groupes viewer plus serrés que les groupes
+# editor, pour la démo.
+limits:
+  default:
+    max_duration: 30s
+    max_result_bytes: 10485760   # 10 MiB
+    requests_per_minute: 120
+  roles:
+    - groups: [equipe-a-viewer, equipe-b-viewer]
+      max_duration: 15s
+      max_result_bytes: 1048576
+      requests_per_minute: 30
+
 session:
   secret: "${env:SESSION_SECRET}"
   ttl: 8h

@@ -213,6 +213,70 @@ session:
 	}
 }
 
+func TestBuildMuxCatchAllStaysForbiddenUnderQuota(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const kid = "k1"
+	jwksSrv := http.NewServeMux()
+	jwksSrv.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		n := base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1})
+		json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "kid": kid, "n": n, "e": e}}})
+	})
+	srv := httptest.NewServer(jwksSrv)
+	defer srv.Close()
+
+	cfg, _, err := config.Load(writeTestConfig(`
+listen: ":0"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+jwt:
+  issuer: https://idp.example
+  audience: proxy-m2m
+  jwks_url: ` + srv.URL + `/jwks
+` + minimalACL + `
+limits:
+  default:
+    max_duration: 30s
+    max_result_bytes: 1048576
+    requests_per_minute: 120
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	built, err := buildMux(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": kid, "typ": "JWT"})
+	payload, _ := json.Marshal(map[string]any{
+		"iss": "https://idp.example", "sub": "svc-1", "aud": "proxy-m2m",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	signingInput := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	hash := sha256.Sum256([]byte(signingInput))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	built.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, authenticated caller under quota should still get the catch-all 403", rec.Code)
+	}
+}
+
 func TestBuildMuxWiresJWTBearerOnAuthMe(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
 

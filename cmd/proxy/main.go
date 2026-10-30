@@ -13,6 +13,7 @@ import (
 
 	"proxy/internal/auth"
 	"proxy/internal/config"
+	"proxy/internal/limits"
 	"proxy/internal/proxy"
 )
 
@@ -109,13 +110,23 @@ func buildMux(cfg *config.Config) (*http.ServeMux, error) {
 		}
 	}
 
+	var limiter *limits.Limits
+	if cfg.Limits.Default != nil || len(cfg.Limits.Roles) > 0 {
+		var err error
+		limiter, err = limits.Parse(cfg.Limits.Default, cfg.Limits.Roles, cfg.ACL.KnownGroups)
+		if err != nil {
+			return nil, fmt.Errorf("limits: %w", err)
+		}
+	}
+	guard := &proxy.Guard{Limits: limiter, Counter: limits.NewCounter(), Sessions: sessions, JWT: jwtVerifier}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", proxy.HandleHealth)
 	mux.HandleFunc("/healthz", proxy.HandleHealth)
 	mux.Handle("/metrics", proxy.MetricsHandler())
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/", guard.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "access denied", http.StatusForbidden)
-	})
+	})))
 	mux.HandleFunc("/auth/me", proxy.HandleMe(sessions, jwtVerifier))
 
 	if oidcActive {

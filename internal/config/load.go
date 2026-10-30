@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"proxy/internal/acl"
+	"proxy/internal/limits"
 )
 
 // Load reads path, resolves ${env:NAME} and ${file:PATH} references, and
@@ -148,6 +149,12 @@ func (c *Config) validate(secrets secretSet) error {
 	}
 	if _, err := acl.Parse(c.ACL.Rules, c.ACL.KnownGroups, c.ACL.SystemIndices); err != nil {
 		return err
+	}
+
+	if c.Limits.Default != nil || len(c.Limits.Roles) > 0 {
+		if _, err := limits.Parse(c.Limits.Default, c.Limits.Roles, c.ACL.KnownGroups); err != nil {
+			return err
+		}
 	}
 	return nil
 }

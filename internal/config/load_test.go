@@ -744,6 +744,112 @@ acl:
 	}
 }
 
+func TestLoadLimitsOptional(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`+minimalACL)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.Default != nil || len(cfg.Limits.Roles) != 0 {
+		t.Fatalf("limits = %+v, want absent", cfg.Limits)
+	}
+}
+
+func TestLoadRejectsInvalidLimitsDuration(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`+minimalACL+`
+limits:
+  default:
+    max_duration: not-a-duration
+    max_result_bytes: 1024
+    requests_per_minute: 10
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "max_duration") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsZeroLimitsQuota(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`+minimalACL+`
+limits:
+  roles:
+    - groups: [testers]
+      max_duration: 1s
+      max_result_bytes: 0
+      requests_per_minute: 10
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "max_result_bytes") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsLimitsGroupInTwoRoles(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+`+minimalACL+`
+limits:
+  roles:
+    - groups: [testers]
+      max_duration: 1s
+      max_result_bytes: 1024
+      requests_per_minute: 10
+    - groups: [testers]
+      max_duration: 2s
+      max_result_bytes: 2048
+      requests_per_minute: 20
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "more than one entry") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsLimitsUnknownGroup(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+acl:
+  known_groups: [testers]
+  rules:
+    - name: default
+      groups: [testers]
+      indices: ["*"]
+      actions: [read]
+limits:
+  roles:
+    - groups: [unknown-group]
+      max_duration: 1s
+      max_result_bytes: 1024
+      requests_per_minute: 10
+`)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unknown group") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestLoadMalformedReference(t *testing.T) {
 	for _, body := range []string{
 		`api_key: "${env:}"`,

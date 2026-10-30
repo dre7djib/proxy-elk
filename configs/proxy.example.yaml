@@ -77,6 +77,23 @@ acl:
       indices: [alice-scratch]
       actions: [read]
 
+# Per-role quotas (F25): omit the whole section for no plafond at all
+# (today's behavior). Each roles entry's groups must be disjoint from
+# every other entry's; a caller matching several entries gets the minimum
+# of each plafond. A caller matching no entry gets default, or no plafond
+# if default is unset too. Enforced only on the catch-all handler, not on
+# /health, /metrics or /auth/*.
+limits:
+  default:
+    max_duration: 30s
+    max_result_bytes: 10485760   # 10 MiB
+    requests_per_minute: 120
+  roles:
+    - groups: [equipe-a-viewer, equipe-b-viewer]
+      max_duration: 15s
+      max_result_bytes: 1048576
+      requests_per_minute: 30
+
 # Required as soon as oidc or ldap is active: the login session (shared by
 # both) is an HMAC-signed cookie, not a server-side store.
 session:
