@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"proxy/internal/audit"
 	"proxy/internal/auth"
 	"proxy/internal/config"
 	"proxy/internal/limits"
@@ -79,7 +80,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 // that denies everything else by default (F3's spirit, needed here to
 // exercise the session at all). OIDC and LDAP share one Sessions: whichever
 // login succeeds, OnSuccess issues the same cookie.
-func buildMux(cfg *config.Config) (*http.ServeMux, error) {
+func buildMux(cfg *config.Config) (http.Handler, error) {
 	oidcActive := cfg.OIDC.Issuer != ""
 	ldapActive := cfg.LDAP.URL != "" || len(cfg.LDAP.URLs) > 0
 
@@ -179,7 +180,7 @@ func buildMux(cfg *config.Config) (*http.ServeMux, error) {
 		mux.HandleFunc("/auth/ldap", login.HandleLogin)
 	}
 
-	return mux, nil
+	return audit.New(os.Stdout, cfg.Mask).Handler(sessions, jwtVerifier, mux), nil
 }
 
 // sessionOnSuccess issues the shared session cookie and redirects to
