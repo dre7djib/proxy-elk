@@ -1,6 +1,9 @@
 package acl
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 // clusterAdminPrefixes are path prefixes Classify treats as cluster_admin
 // (F18) regardless of HTTP method: these are administrative/informational
@@ -20,9 +23,10 @@ var readPOSTSuffixes = []string{
 // ever be granted by a rule (Parse rejects any other action in YAML), so
 // a write or cluster_admin request is always denied by Decide regardless
 // of index coverage.
-func Classify(method, path string) Action {
+func Classify(method, reqPath string) Action {
+	reqPath = path.Clean(reqPath)
 	for _, prefix := range clusterAdminPrefixes {
-		if strings.HasPrefix(path, prefix) {
+		if strings.HasPrefix(reqPath, prefix) {
 			return ActionClusterAdmin
 		}
 	}
@@ -31,7 +35,7 @@ func Classify(method, path string) Action {
 		return ActionRead
 	case "POST":
 		for _, suffix := range readPOSTSuffixes {
-			if strings.HasSuffix(path, suffix) {
+			if strings.HasSuffix(reqPath, suffix) {
 				return ActionRead
 			}
 		}

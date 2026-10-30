@@ -24,7 +24,7 @@ func (p *Policy) DecideRule(id auth.Identity, ctx DecideContext, indices []strin
 }
 
 func (p *Policy) decide(id auth.Identity, ctx DecideContext, indices []string, action Action) (string, error) {
-	if p == nil {
+	if p == nil || len(indices) == 0 {
 		return "", fmt.Errorf("access denied")
 	}
 	var rule string

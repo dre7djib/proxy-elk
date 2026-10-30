@@ -188,21 +188,37 @@ func TestAuthenticateWrongPassword(t *testing.T) {
 	}
 }
 
-func TestAuthenticateEscapesInjectionAttempt(t *testing.T) {
-	var capturedFilter string
-	userDN := "uid=alice,ou=people,dc=example,dc=org"
-	conn := &fakeConn{userDN: userDN, userPassword: "pw"}
-	l := newTestLDAP(t, conn)
-	l.dial = func() (ldapConn, error) {
-		return &filterCapturingConn{fakeConn: conn, captured: &capturedFilter}, nil
+// TestAuthenticateInjectionBattery (F7): every one of these usernames must
+// fail authentication, and the filter the directory sees must carry the
+// escaped form, never the raw metacharacters.
+func TestAuthenticateInjectionBattery(t *testing.T) {
+	cases := []struct {
+		name, username string
+	}{
+		{"wildcard filter widening", "*)(uid=*"},
+		{"admin OR injection", "admin)(|(uid=*"},
+		{"bare wildcard", "*"},
+		{"bare backslash", "\\"},
+		{"embedded null byte", "alice\x00"},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var capturedFilter string
+			userDN := "uid=alice,ou=people,dc=example,dc=org"
+			conn := &fakeConn{userDN: userDN, userPassword: "pw"}
+			l := newTestLDAP(t, conn)
+			l.dial = func() (ldapConn, error) {
+				return &filterCapturingConn{fakeConn: conn, captured: &capturedFilter}, nil
+			}
 
-	malicious := "*)(uid=*"
-	if _, err := l.Authenticate(context.Background(), malicious, "pw"); err == nil {
-		t.Fatal("expected error: injected filter matches nothing in the fake directory")
-	}
-	if strings.Contains(capturedFilter, "*)(uid=*") {
-		t.Fatalf("filter was not escaped: %s", capturedFilter)
+			if _, err := l.Authenticate(context.Background(), c.username, "pw"); err == nil {
+				t.Fatal("expected error: injected filter matches nothing in the fake directory")
+			}
+			want := fmt.Sprintf("(uid=%s)", ldap.EscapeFilter(c.username))
+			if capturedFilter != want {
+				t.Fatalf("filter = %q, want escaped form %q", capturedFilter, want)
+			}
+		})
 	}
 }
 
