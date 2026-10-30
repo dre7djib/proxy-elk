@@ -30,7 +30,7 @@ services:
     volumes:
       - ./scripts/es-bootstrap.sh:/usr/local/bin/es-bootstrap.sh:ro
     networks:
-      - demo
+      - es
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -56,12 +56,10 @@ services:
         soft: -1
         hard: -1
     mem_limit: 1g
-    ports:
-      - "127.0.0.1:9200:9200"
     volumes:
       - esdata:/usr/share/elasticsearch/data
     networks:
-      - demo
+      - es
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
       interval: 10s
@@ -97,7 +95,10 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:9210:9200"
+    # Seul service (hors one-shots) sur les deux réseaux : il doit
+    # joindre elasticsearch (es) et rester joignable par kibana (demo).
     networks:
+      - es
       - demo
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
@@ -127,7 +128,9 @@ services:
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
     volumes:
       - ../../spike/scripts/kibana-bootstrap.sh:/usr/local/bin/kibana-bootstrap.sh:ro
+    # Parle à elasticsearch (es) et à kibana (demo).
     networks:
+      - es
       - demo
     depends_on:
       kibana:
@@ -141,7 +144,7 @@ services:
     volumes:
       - ./scripts/seed.sh:/usr/local/bin/seed.sh:ro
     networks:
-      - demo
+      - es
     depends_on:
       kibana-setup:
         condition: service_completed_successfully
@@ -291,6 +294,13 @@ services:
       retries: 15
 
 networks:
+  # Interne (pas de passerelle vers l'extérieur) : seul le gateway (et les
+  # one-shots qui s'arrêtent après le bootstrap) parle à elasticsearch.
+  # Kibana et le proxy produit n'y sont pas : le nom "elasticsearch" ne se
+  # résout pas chez eux (F66, F69).
+  es:
+    driver: bridge
+    internal: true
   demo:
     driver: bridge
 

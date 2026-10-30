@@ -37,12 +37,19 @@ wait_for() {
 }
 
 echo "== Waiting for services =="
-wait_for "Elasticsearch" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200
 wait_for "Gateway (Track A)" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9210
 wait_for "Kibana" curl -sf http://127.0.0.1:5601/api/status
 wait_for "Product proxy" curl -sf http://127.0.0.1:8081/health
 wait_for "Keycloak" curl -sf http://127.0.0.1:18080/realms/demo
-echo "OK: elasticsearch, gateway, kibana, proxy, keycloak respond"
+echo "OK: gateway, kibana, proxy, keycloak respond"
+echo
+
+echo "== 0. Elasticsearch injoignable en direct (F66, F69) =="
+if curl -s -o /dev/null -m 3 http://127.0.0.1:9200; then
+  echo "KO: 127.0.0.1:9200 a répondu, elasticsearch ne devrait pas être exposé sur l'hôte" >&2
+  exit 1
+fi
+echo "OK: 127.0.0.1:9200 refuse la connexion (réseau es interne)"
 echo
 
 echo "== 1. Proxy produit : /health et /metrics =="
@@ -111,10 +118,10 @@ fi
 echo "OK: alice se connecte à Kibana via le gateway (Track A)"
 echo
 
-echo "== 5. Indices seedés présents =="
+echo "== 5. Indices seedés présents (via le gateway, 9210) =="
 for idx in equipe-a-sample equipe-b-sample; do
   code=$(curl -s -o /dev/null -w '%{http_code}' -u "elastic:${ELASTIC_PASSWORD}" \
-    "http://127.0.0.1:9200/${idx}/_count")
+    "http://127.0.0.1:9210/${idx}/_count")
   if [ "$code" != "200" ]; then
     echo "KO: index ${idx} absent ou inaccessible (code $code)" >&2
     exit 1
