@@ -28,7 +28,7 @@ Target versions: Elasticsearch and Kibana 8.19. A 9.x version will be added afte
 
 ## Running the proxy image
 
-The proxy ships as a Docker image (no demo compose, no Kibana image — see J1-13 for that). Config stays 100% file-based: mount your YAML read-only and pass secrets (`${env:...}` refs in the YAML) as environment variables.
+The proxy ships as a Docker image (no demo compose, no Kibana image). Config stays 100% file-based: mount your YAML read-only and pass secrets (`${env:...}` refs in the YAML) as environment variables.
 
 ```bash
 docker build -t proxy-elk .

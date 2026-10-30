@@ -1,0 +1,51 @@
+# Config du proxy PRODUIT pour la démo J1-13 (dérivée de
+# configs/proxy.example.yaml). Expose /health, /metrics, /auth/* (OIDC +
+# LDAP). Le reverse-proxy ES du binaire produit (run_as, _activate, F2)
+# n'est pas encore livré : Kibana passe par `gateway` (spike Track A), pas
+# par ce proxy. elasticsearch.* est donc renseigné (requis par la
+# validation de config) mais pas encore exercé en pratique.
+
+listen: ":8080"
+
+elasticsearch:
+  url: http://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+
+oidc:
+  issuer: http://keycloak:18080/realms/demo
+  client_id: proxy
+  client_secret: "${env:OIDC_CLIENT_SECRET}"
+  redirect_url: http://127.0.0.1:8081/auth/callback
+  scopes: [openid, email, profile, groups]
+  groups_claim: groups
+
+ldap:
+  # TLS démo (F5) : LDAPS vers le port 636 d'OpenLDAP, CA générée par
+  # scripts/gen-certs.sh et montée en lecture seule (voir docker-compose.yml).
+  url: ldaps://openldap:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_READONLY_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+  ca_file: /etc/proxy/certs/ca.crt
+  nested_groups: false
+  group_cache_ttl: 2m
+
+# Groupes = mêmes CN que le LDIF spike (spike/ldap/01-bootstrap.ldif) et le
+# realm Keycloak (keycloak/realm-export.json) : une seule ACL pour les deux
+# fournisseurs d'identité de la démo.
+acl:
+  rules:
+    - name: equipe-a-read
+      groups: [equipe-a-viewer, equipe-a-editor]
+      indices: [equipe-a-*]
+      actions: [read]
+    - name: equipe-b-read
+      groups: [equipe-b-viewer]
+      indices: [equipe-b-*]
+      actions: [read]
+
+session:
+  secret: "${env:SESSION_SECRET}"
+  ttl: 8h

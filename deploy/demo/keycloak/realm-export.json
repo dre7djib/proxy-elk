@@ -1,0 +1,75 @@
+{
+  "realm": "demo",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "proxy",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "secret": "demo-oidc-secret-change-me",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://127.0.0.1:8081/auth/callback"],
+      "webOrigins": ["http://127.0.0.1:8081"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "groups",
+            "claim.name": "groups",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.org",
+      "firstName": "Alice",
+      "lastName": "Martin",
+      "emailVerified": true,
+      "attributes": { "groups": ["equipe-a-viewer"] },
+      "credentials": [
+        { "type": "password", "value": "alicepass", "temporary": false }
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.org",
+      "firstName": "Bob",
+      "lastName": "Durand",
+      "emailVerified": true,
+      "attributes": { "groups": ["equipe-a-editor"] },
+      "credentials": [
+        { "type": "password", "value": "bobpass", "temporary": false }
+      ]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.org",
+      "firstName": "Carol",
+      "lastName": "Petit",
+      "emailVerified": true,
+      "attributes": { "groups": ["equipe-b-viewer"] },
+      "credentials": [
+        { "type": "password", "value": "carolpass", "temporary": false }
+      ]
+    }
+  ]
+}

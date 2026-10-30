@@ -1,0 +1,5 @@
+# Générés par scripts/gen-certs.sh au premier `docker compose up` ; jetables,
+# jamais commités (même en démo).
+*.crt
+*.key
+*.srl

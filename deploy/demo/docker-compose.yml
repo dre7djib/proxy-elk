@@ -1,0 +1,301 @@
+name: proxy-elk-demo
+
+# J1-13 (F68) : démo "one command" dérivée de spike/docker-compose.yml.
+# spike/ reste inchangé ; ce compose réutilise ses contextes de build
+# (gateway/kibana/engine) et ses clés/LDIF par volume en lecture seule.
+#
+# Deux rôles proxy temporaires, à fusionner une fois F2/run_as dans le
+# produit (cf. README.md) :
+#   - gateway : proxy spike Track A (build ../../spike/proxy), seul chemin
+#     Kibana -> Elasticsearch, LDAP en clair en interne (comme le spike).
+#   - proxy   : image produit (Dockerfile racine), /health /metrics
+#     /auth/* (OIDC Keycloak + LDAP LDAPS). Ne reverse-proxy pas encore
+#     Elasticsearch (F2 pas livré).
+
+services:
+  certs:
+    image: alpine:3.20
+    volumes:
+      - ./certs:/certs
+      - ./scripts/gen-certs.sh:/gen-certs.sh:ro
+    command: ["sh", "/gen-certs.sh"]
+
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+      - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
+    volumes:
+      - ./scripts/es-bootstrap.sh:/usr/local/bin/es-bootstrap.sh:ro
+    networks:
+      - demo
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command: ["bash", "/usr/local/bin/es-bootstrap.sh"]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - node.name=es01
+      - cluster.name=proxy-elk-demo
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.license.self_generated.type=basic
+      - xpack.ml.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  # Gateway = proxy spike Track A (SP-02/SP-03/SP-04), code non modifié,
+  # build depuis spike/proxy. Seul chemin Kibana -> Elasticsearch de la
+  # démo (le binaire produit ne proxy pas encore ES, F2).
+  gateway:
+    build: ../../spike/proxy
+    environment:
+      - UPSTREAM_URL=http://elasticsearch:9200
+      - LISTEN_ADDR=:9200
+      - LDAP_URL=ldap://openldap:389
+      - LDAP_READONLY_DN=cn=readonly,dc=example,dc=org
+      - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - LDAP_BASE_DN=ou=people,dc=example,dc=org
+      - LDAP_CACHE_TTL=2m
+      - PROXY_SERVICE_USER=proxy_service
+      - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
+      - JWT_PRIVATE_KEY_PATH=/keys/private.pem
+      - JWT_ISSUER=spike-proxy
+      - JWT_AUDIENCE=spike-engine
+      - JWT_TTL=5m
+    volumes:
+      - ../../spike/keys/private.pem:/keys/private.pem:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9210:9200"
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  engine:
+    build: ../../spike/engine
+    environment:
+      - JWT_PUBLIC_KEY_PATH=/keys/public.pem
+      - JWT_AUDIENCE=spike-engine
+      - JWT_CLOCK_SKEW=60s
+    volumes:
+      - ../../spike/keys/public.pem:/keys/public.pem:ro
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  kibana-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    volumes:
+      - ../../spike/scripts/kibana-bootstrap.sh:/usr/local/bin/kibana-bootstrap.sh:ro
+    networks:
+      - demo
+    depends_on:
+      kibana:
+        condition: service_healthy
+    command: ["bash", "/usr/local/bin/kibana-bootstrap.sh"]
+
+  seed:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    volumes:
+      - ./scripts/seed.sh:/usr/local/bin/seed.sh:ro
+    networks:
+      - demo
+    depends_on:
+      kibana-setup:
+        condition: service_completed_successfully
+    command: ["bash", "/usr/local/bin/seed.sh"]
+
+  kibana:
+    build:
+      context: ../../spike
+      dockerfile: kibana/Dockerfile
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
+      engine:
+        condition: service_healthy
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=http://gateway:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:5601:5601"
+    volumes:
+      - kibanadata:/usr/share/kibana/data
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '^(200|302)$'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  # OpenLDAP : LDIF du spike monté en lecture seule (pas de copie). TLS
+  # démo (F5, J1-13) sur 636 pour le proxy produit, en plus du 389 en
+  # clair déjà utilisé en interne par gateway (comme le spike, accepté
+  # pour la démo : réseau docker interne, pas d'exposition host).
+  openldap:
+    image: osixia/openldap:1.5.0
+    command: ["--copy-service"]
+    environment:
+      - LDAP_ORGANISATION=Spike Proxy ELK
+      - LDAP_DOMAIN=example.org
+      - LDAP_BASE_DN=dc=example,dc=org
+      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD}
+      - LDAP_CONFIG_PASSWORD=${LDAP_ADMIN_PASSWORD}
+      - LDAP_READONLY_USER=true
+      - LDAP_READONLY_USER_USERNAME=readonly
+      - LDAP_READONLY_USER_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - LDAP_REMOVE_CONFIG_AFTER_SETUP=true
+      - LDAP_TLS=true
+      - LDAP_TLS_CRT_FILENAME=server.crt
+      - LDAP_TLS_KEY_FILENAME=server.key
+      - LDAP_TLS_CA_CRT_FILENAME=ca.crt
+      - LDAP_TLS_ENFORCE=false
+      - LDAP_TLS_VERIFY_CLIENT=never
+    ports:
+      - "127.0.0.1:1389:389"
+      - "127.0.0.1:1636:636"
+    volumes:
+      - ../../spike/ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom:ro
+      - ./certs:/container/service/slapd/assets/certs:ro
+      - ldapdata:/var/lib/ldap
+      - ldapconfig:/etc/ldap/slapd.d
+    networks:
+      - demo
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "ldapwhoami -x -H ldap://localhost:389 -D 'cn=admin,dc=example,dc=org' -w \"$$LDAP_ADMIN_PASSWORD\" >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  # IdP OIDC démo (F13's counterpart for interactive login): Keycloak,
+  # realm "demo" importé au démarrage (client "proxy", users alice/bob/
+  # carol avec groupes = mêmes CN que le LDIF). KC_HOSTNAME_STRICT=false :
+  # l'issuer suit le Host de la requête, donc identique côté backend
+  # (toujours "keycloak:8080" via le DNS docker) et côté navigateur (si
+  # "127.0.0.1 keycloak" est ajouté à /etc/hosts, cf. README ; sinon seul
+  # le smoke-test 302 de verify.sh fonctionne, pas le login interactif).
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+      - KC_HTTP_ENABLED=true
+      - KC_HTTP_PORT=18080
+      - KC_HOSTNAME_STRICT=false
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "127.0.0.1:18080:18080"
+    networks:
+      - demo
+    healthcheck:
+      # Keycloak 24+ expose /health/ready on management port 9000. The
+      # image has no curl/wget — probe with bash /dev/tcp instead.
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000 && printf \"GET /health/ready HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Image PRODUIT (Dockerfile racine, J1-11) : /health /metrics /auth/*
+  # (OIDC Keycloak + LDAPS OpenLDAP). Pas encore dans le chemin Kibana->ES
+  # (F2 pas livré), cf. README pour la fusion prévue avec gateway.
+  proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      - ES_API_KEY=${ES_API_KEY}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET}
+    volumes:
+      - ./configs/proxy.yaml:/etc/proxy/proxy.yaml:ro
+      - ./certs/ca.crt:/etc/proxy/certs/ca.crt:ro
+    depends_on:
+      openldap:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+networks:
+  demo:
+    driver: bridge
+
+volumes:
+  esdata:
+  kibanadata:
+  ldapdata:
+  ldapconfig:
