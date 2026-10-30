@@ -6,36 +6,67 @@ package acl
 
 import (
 	"fmt"
+	"net"
 	"path"
+	"strings"
 )
 
-// Action is a permission a rule can grant. The only value accepted by
-// Parse in this MVP is ActionRead; write support is J1-08.
+// Action is a permission a rule can grant, or a category Classify derives
+// from a request (F18). The only value Parse accepts in a rule's YAML is
+// ActionRead; ActionWrite and ActionClusterAdmin exist so Decide can
+// categorize and deny them, never so a rule can grant them.
 type Action string
 
-// ActionRead is the only action a rule may grant in this MVP.
-const ActionRead Action = "read"
+const (
+	ActionRead         Action = "read"
+	ActionWrite        Action = "write"
+	ActionClusterAdmin Action = "cluster_admin"
+)
 
 // defaultSystemIndices is used when a Policy's system index list isn't
 // configured. F17: a wildcard rule pattern never covers these.
 var defaultSystemIndices = []string{".kibana*", ".security*", ".tasks*", ".enrich-*"}
 
 // Rule is one YAML-configured ACL rule. Exactly one of Users/Groups must be
-// non-empty for the rule to ever match (enforced by Parse).
+// non-empty for the rule to ever match (enforced by Parse). SourceIPs,
+// Methods and Time are optional conditions (F21): absent, the rule behaves
+// exactly as before this ticket. All conditions on a rule must match for
+// it to apply.
 type Rule struct {
 	Name    string   `yaml:"name" json:"name"`
 	Users   []string `yaml:"users" json:"users"`
 	Groups  []string `yaml:"groups" json:"groups"`
 	Indices []string `yaml:"indices" json:"indices"`
 	Actions []string `yaml:"actions" json:"actions"`
+
+	// SourceIPs restricts the rule to callers whose RemoteAddr (never
+	// X-Forwarded-For) is one of these IPs or CIDRs.
+	SourceIPs []string `yaml:"source_ips" json:"source_ips"`
+	// Methods restricts the rule to these HTTP methods.
+	Methods []string `yaml:"methods" json:"methods"`
+	// Time restricts the rule to a UTC time-of-day window, optionally
+	// further restricted to specific days.
+	Time *TimeWindow `yaml:"time" json:"time"`
+}
+
+// TimeWindow is a UTC time-of-day window a rule's Time condition checks
+// against. From and To are "HH:MM"; Days, when non-empty, are three-letter
+// weekday names (Mon, Tue, ...); empty Days means every day.
+type TimeWindow struct {
+	From string   `yaml:"from" json:"from"`
+	To   string   `yaml:"to" json:"to"`
+	Days []string `yaml:"days" json:"days"`
 }
 
 type compiledRule struct {
-	name    string
-	users   map[string]struct{}
-	groups  map[string]struct{}
-	indices []string
-	actions map[Action]struct{}
+	name       string
+	users      map[string]struct{}
+	groups     map[string]struct{}
+	indices    []string
+	actions    map[Action]struct{}
+	sourceNets []*net.IPNet
+	methods    map[string]struct{}
+	timeWindow *compiledTimeWindow
 }
 
 // Policy is a validated, ready-to-evaluate set of ACL rules.
@@ -123,6 +154,28 @@ func Parse(rules []Rule, knownGroups []string, systemIndices []string) (*Policy,
 				cr.groups[g] = struct{}{}
 			}
 		}
+
+		for _, cidr := range r.SourceIPs {
+			n, err := parseIPOrCIDR(cidr)
+			if err != nil {
+				return nil, fmt.Errorf("acl: rule %q has invalid source_ips entry %q: %w", r.Name, cidr, err)
+			}
+			cr.sourceNets = append(cr.sourceNets, n)
+		}
+		if len(r.Methods) > 0 {
+			cr.methods = make(map[string]struct{}, len(r.Methods))
+			for _, m := range r.Methods {
+				cr.methods[strings.ToUpper(m)] = struct{}{}
+			}
+		}
+		if r.Time != nil {
+			tw, err := compileTimeWindow(*r.Time)
+			if err != nil {
+				return nil, fmt.Errorf("acl: rule %q has invalid time window: %w", r.Name, err)
+			}
+			cr.timeWindow = tw
+		}
+
 		compiled = append(compiled, cr)
 	}
 

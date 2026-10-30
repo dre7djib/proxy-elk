@@ -40,7 +40,7 @@ func TestAliasDoesNotBypassACL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Decide(id, resolved, ActionRead); err == nil {
+	if err := p.Decide(id, DecideContext{}, resolved, ActionRead); err == nil {
 		t.Fatal("alias resolving to an ungranted index must be denied")
 	}
 }
@@ -59,7 +59,7 @@ func TestAliasResolvingToGrantedIndexIsAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Decide(id, resolved, ActionRead); err != nil {
+	if err := p.Decide(id, DecideContext{}, resolved, ActionRead); err != nil {
 		t.Fatalf("resolved index granted directly should be allowed: %v", err)
 	}
 }

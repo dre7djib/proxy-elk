@@ -1,0 +1,59 @@
+# ACL replay cases (F24): each case is a Decide call against the rules in
+# proxy.example.yaml. "go test" in internal/config replays every case and
+# checks the outcome — allow (and which rule granted it) or deny. Add a
+# case here whenever proxy.example.yaml's acl.rules changes; the test
+# fails if the two drift apart.
+cases:
+  - name: equipe-a-viewer reads an equipe-a index
+    groups: [equipe-a-viewer]
+    index: equipe-a-logs
+    action: read
+    allow: equipe-a-read
+
+  - name: equipe-a-editor reads the shared reference index
+    groups: [equipe-a-editor]
+    index: shared-ref
+    action: read
+    allow: equipe-a-read
+
+  - name: alice reads her own scratch index
+    subject: alice
+    index: alice-scratch
+    action: read
+    allow: alice-extra
+
+  - name: alice has no access to equipe-a indices via alice-extra
+    subject: alice
+    index: equipe-a-logs
+    action: read
+    deny: true
+
+  - name: equipe-b-viewer has no rule granting it anything here
+    groups: [equipe-b-viewer]
+    index: equipe-a-logs
+    action: read
+    deny: true
+
+  - name: equipe-a-viewer cannot write even to a covered index
+    groups: [equipe-a-viewer]
+    index: equipe-a-logs
+    action: write
+    deny: true
+
+  - name: equipe-a-viewer cannot reach cluster_admin endpoints
+    groups: [equipe-a-viewer]
+    index: equipe-a-logs
+    action: cluster_admin
+    deny: true
+
+  - name: wildcard-free rule never covers a system index (F17)
+    groups: [equipe-a-viewer]
+    index: .kibana_1
+    action: read
+    deny: true
+
+  - name: bob (no group, no user rule) gets nothing
+    subject: bob
+    index: equipe-a-logs
+    action: read
+    deny: true

@@ -62,7 +62,10 @@ jwt:
 # rule. A rule matches a caller if their subject is in users, or any of
 # their groups intersects groups; indices are glob patterns (path.Match)
 # resolved against concrete index names (aliases are resolved first, F15).
-# The only action this MVP supports is read.
+# Classify (F18) turns an upstream request's method+path into read, write
+# or cluster_admin; a rule can only ever grant read (actions: [write] or
+# [cluster_admin] fails to load) — the index being covered never grants a
+# write or a cluster_admin request.
 acl:
   # known_groups: [equipe-a-viewer, equipe-a-editor]  # optional: unknown
   # group referenced by a rule fails to load
@@ -76,6 +79,17 @@ acl:
       users: [alice]
       indices: [alice-scratch]
       actions: [read]
+
+      # Optional conditions (F21), all absent here so this rule behaves
+      # exactly as above. Every condition set on a rule must match; a
+      # condition a rule doesn't set never restricts it.
+      # source_ips: ["10.0.0.0/8"]   # IP or CIDR, matched against RemoteAddr
+      #                              # only — never X-Forwarded-For
+      # methods: [GET, POST]
+      # time:
+      #   from: "08:00"              # UTC, HH:MM
+      #   to: "18:00"
+      #   days: [Mon, Tue, Wed, Thu, Fri]   # omit for every day
 
 # Per-role quotas (F25): omit the whole section for no plafond at all
 # (today's behavior). Each roles entry's groups must be disjoint from

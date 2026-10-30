@@ -8,9 +8,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
+	"proxy/internal/acl"
 	"proxy/internal/audit"
 	"proxy/internal/auth"
 	"proxy/internal/config"
@@ -19,16 +23,25 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	flags, err := parseFlags(os.Args[1:], os.Stderr)
+	if err != nil {
+		os.Exit(1) // parseFlags already reported the error
+	}
+
+	if flags.simulate {
+		if err := runSimulate(flags, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := run([]string{"-config", flags.configPath}, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "config: %s\n", err)
 		os.Exit(1)
 	}
 
-	path, err := configPath(os.Args[1:], os.Stderr)
-	if err != nil {
-		os.Exit(1) // configPath already reported the flag error
-	}
-	cfg, _, err := config.Load(path)
+	cfg, _, err := config.Load(flags.configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
 		os.Exit(1)
@@ -39,11 +52,134 @@ func main() {
 		fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
 		os.Exit(1)
 	}
+
+	store := newPolicyStore()
+	if err := store.Reload(flags.configPath, os.Stderr); err != nil {
+		os.Exit(1)
+	}
+	watchSIGHUP(store, flags.configPath)
+
 	fmt.Fprintf(os.Stderr, "listening on %s\n", cfg.Listen)
 	if err := http.ListenAndServe(cfg.Listen, proxy.Instrument(mux)); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
 		os.Exit(1)
 	}
+}
+
+// cliFlags is every flag the binary accepts: -config always; the rest
+// only matter with -simulate (F22).
+type cliFlags struct {
+	configPath string
+	simulate   bool
+	subject    string
+	groups     string
+	index      string
+	action     string
+	ip         string
+	method     string
+	time       string
+}
+
+func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
+	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var f cliFlags
+	fs.StringVar(&f.configPath, "config", "./configs/proxy.yaml", "config file")
+	fs.BoolVar(&f.simulate, "simulate", false, "simulate an ACL decision instead of starting the server (F22)")
+	fs.StringVar(&f.subject, "subject", "", "simulate: caller subject")
+	fs.StringVar(&f.groups, "groups", "", "simulate: comma-separated caller groups")
+	fs.StringVar(&f.index, "index", "", "simulate: index name")
+	fs.StringVar(&f.action, "action", "", "simulate: read, write or cluster_admin")
+	fs.StringVar(&f.ip, "ip", "", "simulate: caller IP (RemoteAddr), optional")
+	fs.StringVar(&f.method, "method", "", "simulate: HTTP method, optional")
+	fs.StringVar(&f.time, "time", "", "simulate: RFC3339 timestamp, optional (defaults to now)")
+	if err := fs.Parse(args); err != nil {
+		return cliFlags{}, err
+	}
+	return f, nil
+}
+
+// runSimulate loads the config, builds the ACL policy, and prints the
+// Decide outcome for one request (F22): "allow <rule>" or the Decide
+// error text. It never starts listening. The returned error is only for
+// an invalid config or -time value (exit 1 from main); the decision
+// itself is the printed line, not the exit code.
+func runSimulate(f cliFlags, stdout, stderr io.Writer) error {
+	cfg, _, err := config.Load(f.configPath)
+	if err != nil {
+		return err
+	}
+	policy, err := acl.Parse(cfg.ACL.Rules, cfg.ACL.KnownGroups, cfg.ACL.SystemIndices)
+	if err != nil {
+		return err
+	}
+
+	var groups []string
+	if f.groups != "" {
+		groups = strings.Split(f.groups, ",")
+	}
+	id := auth.Identity{Subject: f.subject, Groups: groups}
+
+	ctx := acl.DecideContext{RemoteAddr: f.ip, Method: f.method, Time: time.Now()}
+	if f.time != "" {
+		t, err := time.Parse(time.RFC3339, f.time)
+		if err != nil {
+			return fmt.Errorf("-time: %w", err)
+		}
+		ctx.Time = t
+	}
+
+	name, decideErr := policy.DecideRule(id, ctx, []string{f.index}, acl.Action(f.action))
+	if decideErr != nil {
+		fmt.Fprintln(stdout, decideErr.Error())
+		return nil
+	}
+	fmt.Fprintf(stdout, "allow %s\n", name)
+	return nil
+}
+
+// PolicyStore holds the ACL policy currently in effect, replaced
+// atomically by Reload (F23, SIGHUP). The zero value has no policy yet.
+type PolicyStore struct {
+	policy atomic.Pointer[acl.Policy]
+}
+
+func newPolicyStore() *PolicyStore { return &PolicyStore{} }
+
+// Current returns the policy currently in effect, or nil before the
+// first successful Reload.
+func (s *PolicyStore) Current() *acl.Policy { return s.policy.Load() }
+
+// Reload re-reads path and revalidates the whole config — same
+// validation as startup — then, only on success, builds the ACL policy
+// and swaps it in. The listener, sessions and already-loaded secrets are
+// untouched either way. On failure it writes one line to stderr and
+// keeps the previous policy.
+func (s *PolicyStore) Reload(path string, stderr io.Writer) error {
+	cfg, _, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "acl reload: %s\n", err)
+		return err
+	}
+	policy, err := acl.Parse(cfg.ACL.Rules, cfg.ACL.KnownGroups, cfg.ACL.SystemIndices)
+	if err != nil {
+		fmt.Fprintf(stderr, "acl reload: %s\n", err)
+		return err
+	}
+	s.policy.Store(policy)
+	return nil
+}
+
+// watchSIGHUP reloads store from path every time the process receives
+// SIGHUP, for as long as the process runs.
+func watchSIGHUP(store *PolicyStore, path string) {
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	go func() {
+		for range sighup {
+			store.Reload(path, os.Stderr)
+		}
+	}()
 }
 
 func configPath(args []string, stderr io.Writer) (string, error) {
