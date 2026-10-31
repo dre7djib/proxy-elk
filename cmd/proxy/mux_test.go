@@ -14,8 +14,21 @@ import (
 	"testing"
 	"time"
 
+	"proxy/internal/acl"
 	"proxy/internal/config"
 )
+
+// testPolicy compiles cfg's ACL rules into a fixed policy, for buildMux
+// calls in tests that don't exercise live reload (TestPolicyStoreReload*
+// in reload_test.go cover that).
+func testPolicy(t *testing.T, cfg *config.Config) func() *acl.Policy {
+	t.Helper()
+	p, err := acl.Parse(cfg.ACL.Rules, cfg.ACL.KnownGroups, cfg.ACL.SystemIndices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func() *acl.Policy { return p }
+}
 
 const testSessionSecret = "01234567890123456789012345678901"
 
@@ -36,7 +49,10 @@ listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
-`+minimalACL))
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+` + minimalACL))
 	if err != nil {
 		panic(err)
 	}
@@ -57,15 +73,19 @@ func writeTestConfig(body string) string {
 
 func TestBuildMuxDeniesUnknownRoutesByDefault(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	cfg := baseConfig()
-	mux, err := buildMux(cfg)
+	mux, err := buildMux(cfg, testPolicy(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// Anonymous catch-all request: the relay never calls Elasticsearch
+	// without a resolved identity (J1-15).
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
@@ -80,8 +100,10 @@ func TestBuildMuxDeniesUnknownRoutesByDefault(t *testing.T) {
 
 func TestBuildMuxHealthAndMetrics(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	cfg := baseConfig()
-	mux, err := buildMux(cfg)
+	mux, err := buildMux(cfg, testPolicy(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,13 +128,15 @@ func TestBuildMuxHealthAndMetrics(t *testing.T) {
 	// Still denied: unknown routes aren't accidentally opened by the health/metrics wiring.
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything-else", nil))
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("/anything-else status = %d", rec.Code)
 	}
 }
 
 func TestBuildMuxWiresLDAPRoute(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	cfg, _, err := config.Load(writeTestConfig(`
@@ -120,6 +144,9 @@ listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -129,19 +156,19 @@ ldap:
   groups_base_dn: "ou=groups,dc=example,dc=org"
 session:
   secret: "${env:SESSION_SECRET}"
-`+minimalACL))
+` + minimalACL))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	mux, err := buildMux(cfg)
+	mux, err := buildMux(cfg, testPolicy(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// A malformed body hits LDAPLogin.HandleLogin itself (400), proving the
-	// route is wired rather than caught by the "/" 403 default. This never
-	// dials the directory.
+	// route is wired rather than caught by the relay's catch-all. This
+	// never dials the directory.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/auth/ldap", strings.NewReader("not json"))
 	mux.ServeHTTP(rec, req)
@@ -152,6 +179,8 @@ session:
 
 func TestBuildMuxWiresOIDCRoutes(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("OIDC_SECRET", "idp-secret")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 
@@ -181,6 +210,9 @@ listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 oidc:
   issuer: ` + issuer + `
   client_id: proxy
@@ -188,12 +220,12 @@ oidc:
   redirect_url: https://proxy.example/callback
 session:
   secret: "${env:SESSION_SECRET}"
-`+minimalACL))
+` + minimalACL))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	built, err := buildMux(cfg)
+	built, err := buildMux(cfg, testPolicy(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,12 +247,23 @@ session:
 
 func TestBuildMuxCatchAllStaysForbiddenUnderQuota(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const kid = "k1"
+	esSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only /_resolve/index/anything should ever be hit: Decide denies
+		// before the relay forwards anything else upstream.
+		json.NewEncoder(w).Encode(map[string]any{
+			"indices": []map[string]string{{"name": "anything"}},
+			"aliases": []map[string]any{},
+		})
+	}))
+	defer esSrv.Close()
 	jwksSrv := http.NewServeMux()
 	jwksSrv.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		n := base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes())
@@ -233,8 +276,11 @@ func TestBuildMuxCatchAllStaysForbiddenUnderQuota(t *testing.T) {
 	cfg, _, err := config.Load(writeTestConfig(`
 listen: ":0"
 elasticsearch:
-  url: https://elasticsearch:9200
+  url: ` + esSrv.URL + `
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 jwt:
   issuer: https://idp.example
   audience: proxy-m2m
@@ -250,7 +296,7 @@ limits:
 		t.Fatal(err)
 	}
 
-	built, err := buildMux(cfg)
+	built, err := buildMux(cfg, testPolicy(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,17 +314,21 @@ limits:
 	}
 	token := signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 
+	// Authenticated (JWT) but in no group minimalACL's rule covers:
+	// under quota, still denied by the ACL, never forwarded upstream.
 	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	built.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, authenticated caller under quota should still get the catch-all 403", rec.Code)
+		t.Fatalf("status = %d body=%s, authenticated caller under quota should still get a 403 from the ACL", rec.Code, rec.Body.String())
 	}
 }
 
 func TestBuildMuxWiresJWTBearerOnAuthMe(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -299,26 +349,31 @@ listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 jwt:
   issuer: https://idp.example
   audience: proxy-m2m
   jwks_url: ` + srv.URL + `/jwks
-`+minimalACL))
+` + minimalACL))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	built, err := buildMux(cfg)
+	built, err := buildMux(cfg, testPolicy(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// No route to mint a JWT exists: the proxy only ever verifies one an
-	// external IdP already issued (guard against F78 confusion).
+	// external IdP already issued (guard against F78 confusion). It falls
+	// to the relay's catch-all, which never calls Elasticsearch without a
+	// resolved identity, and this request carries none.
 	rec := httptest.NewRecorder()
 	built.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/auth/jwt", nil))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("/auth/jwt status = %d, want the catch-all 403 (no such route)", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/auth/jwt status = %d, want 401 (no such route, no identity)", rec.Code)
 	}
 
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": kid, "typ": "JWT"})

@@ -46,8 +46,21 @@ func (c *Config) validate(secrets secretSet) error {
 	if _, ok := secrets.paths["elasticsearch.api_key"]; !ok || c.Elasticsearch.APIKey == "" {
 		return fmt.Errorf("elasticsearch.api_key must be ${env:NAME} or ${file:PATH}")
 	}
+	if c.Elasticsearch.RunAsUser == "" {
+		return fmt.Errorf("elasticsearch.run_as_user is required")
+	}
+	if _, ok := secrets.paths["elasticsearch.run_as_password"]; !ok || c.Elasticsearch.RunAsPassword == "" {
+		return fmt.Errorf("elasticsearch.run_as_password must be ${env:NAME} or ${file:PATH}")
+	}
+	if _, ok := secrets.paths["elasticsearch.shadow_password"]; !ok || c.Elasticsearch.ShadowPassword == "" {
+		return fmt.Errorf("elasticsearch.shadow_password must be ${env:NAME} or ${file:PATH}")
+	}
+	if len(c.Elasticsearch.PassthroughUsers) == 0 {
+		c.Elasticsearch.PassthroughUsers = []string{"kibana_system"}
+	}
 	oidcActive := c.OIDC.Issuer != ""
 	ldapActive := c.LDAP.URL != "" || len(c.LDAP.URLs) > 0
+	kerberosActive := c.Kerberos.KeytabFile != ""
 
 	if c.OIDC.Issuer != "" {
 		if c.OIDC.ClientID == "" {
@@ -120,6 +133,18 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 	}
 
+	if kerberosActive {
+		if !ldapActive {
+			return fmt.Errorf("kerberos.keytab_file requires ldap.url or ldap.urls (group resolution)")
+		}
+		if c.Kerberos.ServicePrincipal == "" {
+			return fmt.Errorf("kerberos.service_principal is required when kerberos.keytab_file is set")
+		}
+		if c.Kerberos.Realm == "" {
+			return fmt.Errorf("kerberos.realm is required when kerberos.keytab_file is set")
+		}
+	}
+
 	if c.JWT.Issuer != "" {
 		if c.JWT.Audience == "" {
 			return fmt.Errorf("jwt.audience is required when jwt.issuer is set")
@@ -129,7 +154,7 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 	}
 
-	if oidcActive || ldapActive {
+	if oidcActive || ldapActive || kerberosActive {
 		if _, ok := secrets.paths["session.secret"]; !ok || c.Session.Secret == "" {
 			return fmt.Errorf("session.secret must be ${env:NAME} or ${file:PATH}")
 		}

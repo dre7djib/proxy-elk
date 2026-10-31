@@ -31,11 +31,16 @@ func writeConfig(t *testing.T, body string) string {
 func TestLoadEnvResolvesAndRedacts(t *testing.T) {
 	const secret = "super-secret-value"
 	t.Setenv("ES_API_KEY", secret)
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL)
 	cfg, warnings, err := Load(path)
 	if err != nil {
@@ -77,6 +82,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY_ABSENT}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `)
 	_, _, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "secret env:ES_API_KEY_ABSENT missing") {
@@ -85,6 +93,8 @@ elasticsearch:
 }
 
 func TestLoadFileSecret(t *testing.T) {
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "api_key")
 	if err := os.WriteFile(keyPath, []byte("file-secret\n"), 0o600); err != nil {
@@ -95,6 +105,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${file:`+keyPath+`}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL)
 	cfg, warnings, err := Load(path)
 	if err != nil {
@@ -112,6 +125,8 @@ elasticsearch:
 }
 
 func TestLoadWorldReadableFile(t *testing.T) {
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "api_key")
 	if err := os.WriteFile(keyPath, []byte("file-secret"), 0o644); err != nil {
@@ -125,6 +140,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${file:`+keyPath+`}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL)
 	cfg, warnings, err := Load(path)
 	if err != nil {
@@ -147,6 +165,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${file:/no/such/secret}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `)
 	_, _, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "secret file:/no/such/secret missing") {
@@ -165,6 +186,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${file:`+keyPath+`}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `)
 	_, _, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "missing") {
@@ -173,11 +197,16 @@ elasticsearch:
 }
 
 func TestLoadRejectsPlaintextAPIKey(t *testing.T) {
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "plaintext-key"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `)
 	_, _, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "elasticsearch.api_key") {
@@ -187,11 +216,16 @@ elasticsearch:
 
 func TestLoadOIDCRequiresClientSecret(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 oidc:
   issuer: https://idp.example
   client_id: proxy
@@ -208,6 +242,8 @@ const testSessionSecret = "01234567890123456789012345678901"
 
 func TestLoadOIDCResolvesSecret(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("OIDC_SECRET", "idp-secret")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -215,6 +251,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 oidc:
   issuer: https://idp.example
   client_id: proxy
@@ -237,12 +276,17 @@ session:
 
 func TestLoadLDAPRejectsPlaintextWithoutStartTLS(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldap://ldap.example:389
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -259,6 +303,8 @@ ldap:
 
 func TestLoadLDAPAllowsStartTLS(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -266,6 +312,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldap://ldap.example:389
   start_tls: true
@@ -284,6 +333,8 @@ session:
 
 func TestLoadLDAPAllowsExplicitPlaintext(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -291,6 +342,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldap://ldap.example:389
   insecure_allow_plaintext: true
@@ -309,6 +363,8 @@ session:
 
 func TestLoadLDAPAcceptsLDAPS(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -316,6 +372,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -337,11 +396,16 @@ session:
 
 func TestLoadLDAPRequiresBindPasswordSecret(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -358,6 +422,8 @@ ldap:
 
 func TestLoadLDAPRequiresSingleUserFilterPlaceholder(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	for _, filter := range []string{"(uid=fixed)", "(uid=%s)(cn=%s)"} {
 		path := writeConfig(t, `
@@ -365,6 +431,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -382,6 +451,8 @@ ldap:
 
 func TestLoadLDAPDefaults(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -389,6 +460,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -416,6 +490,8 @@ session:
 
 func TestLoadLDAPURLsFailover(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -423,6 +499,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   urls: [ldaps://dc1.example:636, ldaps://dc2.example:636]
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -444,12 +523,17 @@ session:
 
 func TestLoadLDAPRejectsURLAndURLsTogether(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://dc1.example:636
   urls: [ldaps://dc1.example:636, ldaps://dc2.example:636]
@@ -467,6 +551,8 @@ ldap:
 
 func TestLoadLDAPRejectsInvalidDurations(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	for _, field := range []string{"group_cache_ttl: not-a-duration", "failure_window: 0s", "lockout_for: -5m"} {
 		path := writeConfig(t, `
@@ -474,6 +560,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -492,12 +581,17 @@ ldap:
 
 func TestLoadLDAPRejectsMaxFailuresBelowOne(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -515,12 +609,17 @@ ldap:
 
 func TestLoadRequiresSessionSecretWhenOIDCActive(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("OIDC_SECRET", "idp-secret")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 oidc:
   issuer: https://idp.example
   client_id: proxy
@@ -535,12 +634,17 @@ oidc:
 
 func TestLoadRequiresSessionSecretWhenLDAPActive(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -555,14 +659,126 @@ ldap:
 	}
 }
 
-func TestLoadRejectsSessionSecretPlaintext(t *testing.T) {
+func TestLoadKerberosOptionalByDefault(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+`+minimalACL)
+	if _, _, err := Load(path); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadKerberosRequiresLDAP(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+kerberos:
+  keytab_file: /etc/proxy/krb5.keytab
+  service_principal: HTTP/proxy.demo.local@EXAMPLE.ORG
+  realm: EXAMPLE.ORG
+session:
+  secret: "${env:SESSION_SECRET}"
+`+minimalACL)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "kerberos.keytab_file requires ldap") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadKerberosRequiresServicePrincipalAndRealm(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	t.Setenv("SESSION_SECRET", testSessionSecret)
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+kerberos:
+  keytab_file: /etc/proxy/krb5.keytab
+session:
+  secret: "${env:SESSION_SECRET}"
+`+minimalACL)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "kerberos.service_principal") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadKerberosRequiresSessionSecret(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+ldap:
+  url: ldaps://ldap.example:636
+  bind_dn: "cn=readonly,dc=example,dc=org"
+  bind_password: "${env:LDAP_BIND_PASSWORD}"
+  base_dn: "ou=people,dc=example,dc=org"
+  user_filter: "(uid=%s)"
+  groups_base_dn: "ou=groups,dc=example,dc=org"
+kerberos:
+  keytab_file: /etc/proxy/krb5.keytab
+  service_principal: HTTP/proxy.demo.local@EXAMPLE.ORG
+  realm: EXAMPLE.ORG
+`+minimalACL)
+	_, _, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "session.secret") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsSessionSecretPlaintext(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
+	t.Setenv("LDAP_BIND_PASSWORD", "x")
+	path := writeConfig(t, `
+listen: ":8080"
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -581,6 +797,8 @@ session:
 
 func TestLoadRejectsShortSessionSecret(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", "too-short")
 	path := writeConfig(t, `
@@ -588,6 +806,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -606,6 +827,8 @@ session:
 
 func TestLoadRejectsInvalidSessionTTL(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("LDAP_BIND_PASSWORD", "x")
 	t.Setenv("SESSION_SECRET", testSessionSecret)
 	path := writeConfig(t, `
@@ -613,6 +836,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ldap:
   url: ldaps://ldap.example:636
   bind_dn: "cn=readonly,dc=example,dc=org"
@@ -632,11 +858,16 @@ session:
 
 func TestLoadSessionOptionalWithoutOIDCOrLDAP(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL)
 	if _, _, err := Load(path); err != nil {
 		t.Fatal(err)
@@ -645,11 +876,16 @@ elasticsearch:
 
 func TestLoadJWTRequiresAudience(t *testing.T) {
 	t.Setenv("ES_API_KEY", "secret")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 jwt:
   issuer: https://idp.example
   jwks_url: https://idp.example/certs
@@ -661,11 +897,16 @@ jwt:
 
 func TestLoadJWTRequiresJWKSURL(t *testing.T) {
 	t.Setenv("ES_API_KEY", "secret")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 jwt:
   issuer: https://idp.example
   audience: proxy-m2m
@@ -677,11 +918,16 @@ jwt:
 
 func TestLoadJWTOptionalWithoutIssuer(t *testing.T) {
 	t.Setenv("ES_API_KEY", "secret")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
@@ -694,11 +940,16 @@ elasticsearch:
 
 func TestLoadRequiresACLRules(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `)
 	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "acl.rules") {
 		t.Fatalf("err = %v", err)
@@ -707,11 +958,16 @@ elasticsearch:
 
 func TestLoadRejectsInvalidACLRule(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 acl:
   rules:
     - name: bad
@@ -726,11 +982,16 @@ acl:
 
 func TestLoadRejectsACLUnknownGroup(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 acl:
   known_groups: [team-a]
   rules:
@@ -746,11 +1007,16 @@ acl:
 
 func TestLoadLimitsOptional(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL)
 	cfg, _, err := Load(path)
 	if err != nil {
@@ -763,11 +1029,16 @@ elasticsearch:
 
 func TestLoadRejectsInvalidLimitsDuration(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL+`
 limits:
   default:
@@ -782,11 +1053,16 @@ limits:
 
 func TestLoadRejectsZeroLimitsQuota(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL+`
 limits:
   roles:
@@ -802,11 +1078,16 @@ limits:
 
 func TestLoadRejectsLimitsGroupInTwoRoles(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `+minimalACL+`
 limits:
   roles:
@@ -826,11 +1107,16 @@ limits:
 
 func TestLoadRejectsLimitsUnknownGroup(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeConfig(t, `
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 acl:
   known_groups: [testers]
   rules:
@@ -872,6 +1158,8 @@ elasticsearch:
 func TestExampleConfig(t *testing.T) {
 	const secret = "example-secret-value"
 	t.Setenv("ES_API_KEY", secret)
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	t.Setenv("OIDC_CLIENT_SECRET", "example-oidc-secret")
 	t.Setenv("LDAP_BIND_PASSWORD", "example-ldap-secret")
 	t.Setenv("SESSION_SECRET", testSessionSecret)

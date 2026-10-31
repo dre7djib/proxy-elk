@@ -144,4 +144,17 @@ curl -sf -X POST "${KBN_AUTH[@]}" "${KBN_HEADERS[@]}" \
   }' >/dev/null
 echo "OK"
 
+# Default data view per space (Discover otherwise opens logs-*,filebeat-*,
+# which the proxy ACL rightly denies to team users).
+for team in equipe-a equipe-b; do
+  echo "Data view ${team}-* in the ${team} space..."
+  curl -sf -X POST "${KBN_AUTH[@]}" "${KBN_HEADERS[@]}" \
+    "${KIBANA_URL}/s/${team}/api/data_views/data_view" \
+    -d "{\"override\":true,\"data_view\":{\"id\":\"${team}-default\",\"title\":\"${team}-*\",\"name\":\"${team}-*\"}}" >/dev/null
+  curl -sf -X POST "${KBN_AUTH[@]}" "${KBN_HEADERS[@]}" \
+    "${KIBANA_URL}/s/${team}/api/data_views/default" \
+    -d "{\"data_view_id\":\"${team}-default\",\"force\":true}" >/dev/null
+  echo "OK"
+done
+
 echo "Kibana bootstrap complete (SP-04): equipe-a/equipe-b spaces, equipe_a_viewer/equipe_a_editor/equipe_b_viewer roles, test data and dashboard."

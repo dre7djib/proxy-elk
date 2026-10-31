@@ -16,6 +16,8 @@ type Config struct {
 	ACL           ACL           `yaml:"acl" json:"acl"`
 	Limits        Limits        `yaml:"limits" json:"limits"`
 	Session       Session       `yaml:"session" json:"session"`
+	Kibana        Kibana        `yaml:"kibana" json:"kibana"`
+	Kerberos      Kerberos      `yaml:"kerberos" json:"kerberos"`
 
 	secrets secretSet
 }
@@ -39,10 +41,50 @@ type ACL struct {
 	Rules         []acl.Rule `yaml:"rules" json:"rules"`
 }
 
-// Elasticsearch is the upstream cluster. APIKey comes from a secret reference.
+// Elasticsearch is the upstream cluster. APIKey resolves the ACL index
+// resolver's own calls (/_resolve/index); it is never sent on the relayed
+// request. RunAsPassword and ShadowPassword come from a secret reference.
 type Elasticsearch struct {
 	URL    string `yaml:"url" json:"url"`
 	APIKey string `yaml:"api_key" json:"api_key"`
+
+	// RunAsUser/RunAsPassword is the service account the relay
+	// authenticates as upstream once a caller's identity is resolved and
+	// allowed; es-security-runas-user then impersonates that caller (F2).
+	RunAsUser     string `yaml:"run_as_user" json:"run_as_user"`
+	RunAsPassword string `yaml:"run_as_password" json:"run_as_password"`
+	// ShadowPassword is the native-realm secret substituted into
+	// POST /_security/profile/_activate for an LDAP user, once their LDAP
+	// password has been re-checked (F2): never typed by the user, never
+	// sent to LDAP.
+	ShadowPassword string `yaml:"shadow_password" json:"shadow_password"`
+	// PassthroughUsers relay unchanged, with their own Basic credentials,
+	// never through the ACL. Defaults to [kibana_system].
+	PassthroughUsers []string `yaml:"passthrough_users" json:"passthrough_users"`
+}
+
+// Kibana enables the SSO login bridge (/auth/kibana): the proxy logs the
+// browser into Kibana's own session on its behalf (POST
+// /internal/security/login) right after an LDAP login, so Kibana's own
+// login screen never appears. Empty URL disables the route. URL is the
+// address the proxy itself calls (container-internal, e.g.
+// http://kibana:5601); PublicURL is where the browser is redirected
+// afterwards (e.g. http://127.0.0.1:5601) and defaults to URL when empty.
+type Kibana struct {
+	URL       string `yaml:"url" json:"url"`
+	PublicURL string `yaml:"public_url" json:"public_url"`
+}
+
+// Kerberos enables SPNEGO/Negotiate login in place of the /auth/kibana
+// form: the browser never types a password, the proxy validates the
+// ticket against KeytabFile (a mounted binary file, never a ${file:}
+// secret reference — that would land it in the secret mask) and resolves
+// groups via LDAP (required alongside, since Kerberos carries none
+// itself). Empty KeytabFile disables the whole path.
+type Kerberos struct {
+	KeytabFile       string `yaml:"keytab_file" json:"keytab_file"`
+	ServicePrincipal string `yaml:"service_principal" json:"service_principal"`
+	Realm            string `yaml:"realm" json:"realm"`
 }
 
 // OIDC is the identity provider used for the authorization code flow.

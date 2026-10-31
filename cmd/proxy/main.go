@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"proxy/internal/audit"
 	"proxy/internal/auth"
 	"proxy/internal/config"
+	"proxy/internal/es"
 	"proxy/internal/limits"
 	"proxy/internal/proxy"
 )
@@ -47,17 +49,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	mux, err := buildMux(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
-		os.Exit(1)
-	}
-
 	store := newPolicyStore()
 	if err := store.Reload(flags.configPath, os.Stderr); err != nil {
 		os.Exit(1)
 	}
 	watchSIGHUP(store, flags.configPath)
+
+	mux, err := buildMux(cfg, store.Current)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Fprintf(os.Stderr, "listening on %s\n", cfg.Listen)
 	if err := http.ListenAndServe(cfg.Listen, proxy.Instrument(mux)); err != nil {
@@ -212,16 +214,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// buildMux wires every enabled login route plus GET /auth/me onto a mux
-// that denies everything else by default (F3's spirit, needed here to
-// exercise the session at all). OIDC and LDAP share one Sessions: whichever
-// login succeeds, OnSuccess issues the same cookie.
-func buildMux(cfg *config.Config) (http.Handler, error) {
+// buildMux wires every enabled login route, GET /auth/me, and the
+// Elasticsearch relay (J1-15, F2) onto a mux that denies everything else
+// by default (F3's spirit). OIDC and LDAP share one Sessions: whichever
+// login succeeds, OnSuccess issues the same cookie. policy is called once
+// per relayed request, so a live ACL reload (SIGHUP, F23) applies without
+// rebuilding the mux.
+func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, error) {
 	oidcActive := cfg.OIDC.Issuer != ""
 	ldapActive := cfg.LDAP.URL != "" || len(cfg.LDAP.URLs) > 0
+	kerberosActive := cfg.Kerberos.KeytabFile != ""
 
 	var sessions *auth.Sessions
-	if oidcActive || ldapActive {
+	if oidcActive || ldapActive || kerberosActive {
 		ttl, err := time.ParseDuration(cfg.Session.TTL)
 		if err != nil {
 			return nil, fmt.Errorf("session.ttl: %w", err)
@@ -255,15 +260,12 @@ func buildMux(cfg *config.Config) (http.Handler, error) {
 			return nil, fmt.Errorf("limits: %w", err)
 		}
 	}
-	guard := &proxy.Guard{Limits: limiter, Counter: limits.NewCounter(), Sessions: sessions, JWT: jwtVerifier}
+	counter := limits.NewCounter()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", proxy.HandleHealth)
 	mux.HandleFunc("/healthz", proxy.HandleHealth)
 	mux.Handle("/metrics", proxy.MetricsHandler())
-	mux.Handle("/", guard.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "access denied", http.StatusForbidden)
-	})))
 	mux.HandleFunc("/auth/me", proxy.HandleMe(sessions, jwtVerifier))
 
 	if oidcActive {
@@ -283,12 +285,15 @@ func buildMux(cfg *config.Config) (http.Handler, error) {
 		mux.HandleFunc("/auth/callback", login.HandleCallback)
 	}
 
+	var directory auth.PasswordAuthenticator
+	var kerberos *auth.Kerberos
+	var lookup func(ctx context.Context, username string) (*auth.Identity, error)
 	if ldapActive {
 		groupCacheTTL, err := time.ParseDuration(cfg.LDAP.GroupCacheTTL)
 		if err != nil {
 			return nil, fmt.Errorf("ldap.group_cache_ttl: %w", err)
 		}
-		directory, err := auth.NewLDAP(auth.LDAPConfig{
+		ldapDirectory, err := auth.NewLDAP(auth.LDAPConfig{
 			URL: cfg.LDAP.URL, URLs: cfg.LDAP.URLs, StartTLS: cfg.LDAP.StartTLS,
 			BindDN: cfg.LDAP.BindDN, BindPassword: cfg.LDAP.BindPassword, BaseDN: cfg.LDAP.BaseDN,
 			UserFilter: cfg.LDAP.UserFilter, GroupsBaseDN: cfg.LDAP.GroupsBaseDN, CAFile: cfg.LDAP.CAFile,
@@ -312,9 +317,70 @@ func buildMux(cfg *config.Config) (http.Handler, error) {
 			FailureWindow: failureWindow,
 			LockoutFor:    lockoutFor,
 		})
-		login := &proxy.LDAPLogin{Directory: directory, Limiter: limiter, OnSuccess: sessionOnSuccess(sessions, auth.MethodLDAP)}
+		login := &proxy.LDAPLogin{Directory: ldapDirectory, Limiter: limiter, OnSuccess: sessionOnSuccess(sessions, auth.MethodLDAP)}
 		mux.HandleFunc("/auth/ldap", login.HandleLogin)
+		directory = ldapDirectory
+		lookup = ldapDirectory.Lookup
+
+		if kerberosActive {
+			kerberos, err = auth.NewKerberos(auth.KerberosConfig{
+				KeytabFile:       cfg.Kerberos.KeytabFile,
+				ServicePrincipal: cfg.Kerberos.ServicePrincipal,
+				Realm:            cfg.Kerberos.Realm,
+			}, ldapDirectory.Lookup)
+			if err != nil {
+				return nil, fmt.Errorf("kerberos: %w", err)
+			}
+		}
+
+		if cfg.Kibana.URL != "" {
+			publicURL := cfg.Kibana.PublicURL
+			if publicURL == "" {
+				publicURL = cfg.Kibana.URL
+			}
+			kibanaSSO := &proxy.KibanaSSOLogin{
+				Directory:      ldapDirectory,
+				Limiter:        limiter,
+				KibanaURL:      cfg.Kibana.URL,
+				PublicURL:      publicURL,
+				Sessions:       sessions,
+				Method:         auth.MethodLDAP,
+				Kerberos:       kerberos,
+				ShadowPassword: cfg.Elasticsearch.ShadowPassword,
+			}
+			mux.HandleFunc("POST /auth/kibana", kibanaSSO.HandleLogin)
+			if kerberosActive {
+				mux.HandleFunc("GET /auth/kibana", kibanaSSO.HandleNegotiate)
+			} else {
+				mux.HandleFunc("GET /auth/kibana", kibanaSSO.HandleForm)
+			}
+		}
 	}
+
+	target, err := url.Parse(cfg.Elasticsearch.URL)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch.url: %w", err)
+	}
+	passthrough := make(map[string]bool, len(cfg.Elasticsearch.PassthroughUsers))
+	for _, u := range cfg.Elasticsearch.PassthroughUsers {
+		passthrough[u] = true
+	}
+	mux.Handle("/", es.NewRelay(es.Config{
+		Target:         target,
+		LDAP:           directory,
+		Sessions:       sessions,
+		JWT:            jwtVerifier,
+		Kerberos:       kerberos,
+		Limits:         limiter,
+		Counter:        counter,
+		Policy:         policy,
+		Resolver:       acl.NewESResolver(cfg.Elasticsearch.URL, cfg.Elasticsearch.APIKey),
+		RunAsUser:      cfg.Elasticsearch.RunAsUser,
+		RunAsPassword:  cfg.Elasticsearch.RunAsPassword,
+		ShadowPassword: cfg.Elasticsearch.ShadowPassword,
+		Lookup:         lookup,
+		Passthrough:    passthrough,
+	}))
 
 	return audit.New(os.Stdout, cfg.Mask).Handler(sessions, jwtVerifier, mux), nil
 }

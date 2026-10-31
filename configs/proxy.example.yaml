@@ -6,7 +6,21 @@
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
+  # api_key is only for the ACL index resolver's own calls
+  # (/_resolve/index); it is never sent on the relayed request.
   api_key: "${env:ES_API_KEY}"
+  # run_as_user/run_as_password: the service account the relay
+  # authenticates as upstream; es-security-runas-user then impersonates
+  # the caller once ACL allows the request (F2).
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  # shadow_password: native-realm secret substituted into
+  # POST /_security/profile/_activate for an LDAP user, once their LDAP
+  # password has been re-checked. Never typed by a user, never sent to LDAP.
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+  # passthrough_users relay unchanged, with their own Basic credentials,
+  # never through the ACL. Default shown.
+  # passthrough_users: [kibana_system]
 
 # Omit the oidc section entirely to disable OIDC login.
 oidc:
@@ -113,3 +127,26 @@ limits:
 session:
   secret: "${env:SESSION_SECRET}"   # at least 32 bytes
   ttl: 8h  # default
+
+# Optional Kibana SSO bridge: adds GET/POST /auth/kibana (a login form of
+# its own), which logs the browser into Kibana's own session on its
+# behalf after an LDAP login, so Kibana's login screen never appears.
+# Requires ldap: above. url is the address the proxy itself calls
+# (container-internal); public_url is where the browser is redirected
+# afterwards and defaults to url when omitted.
+# kibana:
+#   url: http://kibana:5601
+#   public_url: http://127.0.0.1:5601
+
+# Optional SPNEGO/Kerberos login, on top of LDAP/OIDC: when set, GET
+# /auth/kibana stops rendering the form and becomes the Negotiate
+# challenge/response instead — the browser's own Kerberos ticket signs
+# it into Kibana with zero fields typed. Requires ldap: above (groups)
+# and session: below, same as OIDC/LDAP. keytab_file is a mounted binary
+# file, never a ${file:} secret reference. The proxy never contacts the
+# KDC itself: accepting a client's ticket only needs the keytab, so no
+# krb5.conf is required in its container.
+# kerberos:
+#   keytab_file: /etc/proxy/krb5.keytab
+#   service_principal: HTTP/proxy.demo.local@EXAMPLE.ORG
+#   realm: EXAMPLE.ORG

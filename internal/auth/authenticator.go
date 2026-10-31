@@ -8,9 +8,10 @@ import "context"
 type Method string
 
 const (
-	MethodOIDC Method = "oidc"
-	MethodLDAP Method = "ldap"
-	MethodJWT  Method = "jwt"
+	MethodOIDC     Method = "oidc"
+	MethodLDAP     Method = "ldap"
+	MethodJWT      Method = "jwt"
+	MethodKerberos Method = "kerberos"
 )
 
 // PasswordAuthenticator authenticates a username/password pair into an

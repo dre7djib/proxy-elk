@@ -2,7 +2,7 @@
 
 Authentication and authorization proxy in front of self-hosted Elasticsearch, with an AI assistant integrated into Kibana through a minimal plugin. Open source (Apache-2.0).
 
-> **Status: spike closed.** SP-01 to SP-08 are done (see `spike/` and the spike plan). Nothing is production-ready yet. J1 is next.
+> **Status: J1 done.** SP-01 to SP-08 (spike) and J1-01 to J1-15 are done (see `spike/` and the spike plan): authentication, ACL, audit, secrets, and the Elasticsearch relay (`run_as`) are in the product binary — a proxy usable on its own in front of Elasticsearch, not yet a published release. J2 (AI assistant) is next.
 
 ## Why
 
@@ -34,6 +34,7 @@ The proxy ships as a Docker image (no demo compose, no Kibana image). Config sta
 docker build -t proxy-elk .
 docker run --rm -p 8080:8080 \
   -e SESSION_SECRET=... -e ES_API_KEY=... \
+  -e ES_RUN_AS_PASSWORD=... -e ES_SHADOW_PASSWORD=... \
   -v "$PWD/configs/my-proxy.yaml:/etc/proxy/proxy.yaml:ro" \
   proxy-elk
 curl -sf localhost:8080/health   # liveness, no auth

@@ -2,15 +2,12 @@ name: proxy-elk-demo
 
 # J1-13 (F68) : démo "one command" dérivée de spike/docker-compose.yml.
 # spike/ reste inchangé ; ce compose réutilise ses contextes de build
-# (gateway/kibana/engine) et ses clés/LDIF par volume en lecture seule.
+# (kibana/engine) et ses clés/LDIF par volume en lecture seule.
 #
-# Deux rôles proxy temporaires, à fusionner une fois F2/run_as dans le
-# produit (cf. README.md) :
-#   - gateway : proxy spike Track A (build ../../spike/proxy), seul chemin
-#     Kibana -> Elasticsearch, LDAP en clair en interne (comme le spike).
-#   - proxy   : image produit (Dockerfile racine), /health /metrics
-#     /auth/* (OIDC Keycloak + LDAP LDAPS). Ne reverse-proxy pas encore
-#     Elasticsearch (F2 pas livré).
+# Un seul proxy devant Kibana <-> Elasticsearch depuis J1-15 (F2) : le
+# gateway spike Track A (build spike/proxy) a été retiré, remplacé par le
+# relais run_as/_activate du binaire produit (internal/es). spike/ reste
+# inchangé ; spike/proxy n'est simplement plus construit par cette démo.
 
 services:
   certs:
@@ -22,6 +19,9 @@ services:
 
   setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    # Root: the image's default non-root user can't write to the
+    # essecrets volume (root:root, 755) otherwise.
+    user: "0:0"
     environment:
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - KIBANA_PASSWORD=${KIBANA_PASSWORD}
@@ -29,6 +29,10 @@ services:
       - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
     volumes:
       - ./scripts/es-bootstrap.sh:/usr/local/bin/es-bootstrap.sh:ro
+      # Shared with `proxy`: es-bootstrap.sh writes the resolver API key
+      # here (J1-15, F15) — an ES-generated secret, never a static .env
+      # value, so elasticsearch.api_key uses ${file:} (configs/proxy.yaml).
+      - essecrets:/secrets
     networks:
       - es
     depends_on:
@@ -60,46 +64,6 @@ services:
       - esdata:/usr/share/elasticsearch/data
     networks:
       - es
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-
-  # Gateway = proxy spike Track A (SP-02/SP-03/SP-04), code non modifié,
-  # build depuis spike/proxy. Seul chemin Kibana -> Elasticsearch de la
-  # démo (le binaire produit ne proxy pas encore ES, F2).
-  gateway:
-    build: ../../spike/proxy
-    environment:
-      - UPSTREAM_URL=http://elasticsearch:9200
-      - LISTEN_ADDR=:9200
-      - LDAP_URL=ldap://openldap:389
-      - LDAP_READONLY_DN=cn=readonly,dc=example,dc=org
-      - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
-      - LDAP_BASE_DN=ou=people,dc=example,dc=org
-      - LDAP_CACHE_TTL=2m
-      - PROXY_SERVICE_USER=proxy_service
-      - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
-      - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
-      - JWT_PRIVATE_KEY_PATH=/keys/private.pem
-      - JWT_ISSUER=spike-proxy
-      - JWT_AUDIENCE=spike-engine
-      - JWT_TTL=5m
-    volumes:
-      - ../../spike/keys/private.pem:/keys/private.pem:ro
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-      openldap:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:9210:9200"
-    # Seul service (hors one-shots) sur les deux réseaux : il doit
-    # joindre elasticsearch (es) et rester joignable par kibana (demo).
-    networks:
-      - es
-      - demo
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
       interval: 10s
@@ -159,13 +123,13 @@ services:
         condition: service_healthy
       setup:
         condition: service_completed_successfully
-      gateway:
+      proxy:
         condition: service_healthy
       engine:
         condition: service_healthy
     environment:
       - SERVERNAME=kibana
-      - ELASTICSEARCH_HOSTS=http://gateway:9200
+      - ELASTICSEARCH_HOSTS=http://proxy:8080
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
@@ -185,9 +149,10 @@ services:
       retries: 30
 
   # OpenLDAP : LDIF du spike monté en lecture seule (pas de copie). TLS
-  # démo (F5, J1-13) sur 636 pour le proxy produit, en plus du 389 en
-  # clair déjà utilisé en interne par gateway (comme le spike, accepté
-  # pour la démo : réseau docker interne, pas d'exposition host).
+  # démo (F5, J1-13) sur 636 : le proxy produit s'y connecte en LDAPS pour
+  # /auth/ldap ET pour le relais ES (run_as, J1-15), une seule connexion
+  # LDAP/LDAPS pour les deux. Le 389 en clair reste exposé pour un client
+  # LDAP direct éventuel, mais le produit ne s'en sert pas.
   openldap:
     image: osixia/openldap:1.5.0
     command: ["--copy-service"]
@@ -227,6 +192,45 @@ services:
       retries: 30
       start_period: 15s
 
+  # KDC MIT pour le SSO Kerberos/SPNEGO (plan kerberos_spnego_sso) : realm
+  # EXAMPLE.ORG (même domaine que l'annuaire), principal alice (même mot
+  # de passe que le LDIF, pour un seul kinit) et keytab du proxy généré
+  # au boot (entrypoint.sh), jamais commité. Deux SPN dans le keytab :
+  # HTTP/proxy.demo.local (navigateur) et HTTP/proxy (krb5-user, réseau
+  # Docker). Port 88 publié pour un kinit depuis l'hôte.
+  kdc:
+    build: ./kerberos
+    environment:
+      - REALM=EXAMPLE.ORG
+      - ALICE_PASSWORD=${ALICE_PASSWORD}
+    ports:
+      - "127.0.0.1:88:88/udp"
+      - "127.0.0.1:88:88/tcp"
+    volumes:
+      - kdcdata:/var/lib/krb5kdc
+      - krb5keytab:/keytab
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /keytab/krb5.keytab"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # Client krb5-user + curl GSSAPI pour le smoke-test SPNEGO de
+  # verify.sh : le GSS de macOS ne suit pas toujours KRB5_CONFIG, ce
+  # conteneur fait le kinit + curl --negotiate depuis le réseau Docker.
+  krb5-user:
+    build:
+      context: ./kerberos
+      dockerfile: client.Dockerfile
+    networks:
+      - demo
+    depends_on:
+      kdc:
+        condition: service_healthy
+
   # IdP OIDC démo (F13's counterpart for interactive login): Keycloak,
   # realm "demo" importé au démarrage (client "proxy", users alice/bob/
   # carol avec groupes = mêmes CN que le LDIF). KC_HOSTNAME_STRICT=false :
@@ -264,28 +268,43 @@ services:
       start_period: 30s
 
   # Image PRODUIT (Dockerfile racine, J1-11) : /health /metrics /auth/*
-  # (OIDC Keycloak + LDAPS OpenLDAP). Pas encore dans le chemin Kibana->ES
-  # (F2 pas livré), cf. README pour la fusion prévue avec gateway.
+  # (OIDC Keycloak + LDAPS OpenLDAP) et, depuis J1-15 (F2), le relais
+  # Elasticsearch (run_as, _activate) — seul chemin Kibana -> Elasticsearch
+  # de la démo.
   proxy:
     build:
       context: ../..
       dockerfile: Dockerfile
     environment:
-      - ES_API_KEY=${ES_API_KEY}
+      - ES_RUN_AS_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      - ES_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
       - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
       - SESSION_SECRET=${SESSION_SECRET}
     volumes:
       - ./configs/proxy.yaml:/etc/proxy/proxy.yaml:ro
       - ./certs/ca.crt:/etc/proxy/certs/ca.crt:ro
+      # es-bootstrap.sh (service `setup`) writes the resolver API key here.
+      - essecrets:/secrets:ro
+      # kdc's entrypoint.sh writes the keytab here (kerberos_spnego_sso).
+      - krb5keytab:/etc/proxy/krb5:ro
     depends_on:
+      elasticsearch:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
       openldap:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      kdc:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8081:8080"
+    # Seul service durable (hors one-shots) sur les deux réseaux : il doit
+    # joindre elasticsearch (es) et rester joignable par kibana (demo).
     networks:
+      - es
       - demo
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null"]
@@ -294,10 +313,10 @@ services:
       retries: 15
 
 networks:
-  # Interne (pas de passerelle vers l'extérieur) : seul le gateway (et les
-  # one-shots qui s'arrêtent après le bootstrap) parle à elasticsearch.
-  # Kibana et le proxy produit n'y sont pas : le nom "elasticsearch" ne se
-  # résout pas chez eux (F66, F69).
+  # Interne (pas de passerelle vers l'extérieur) : seul le proxy produit
+  # (et les one-shots qui s'arrêtent après le bootstrap) parle à
+  # elasticsearch. Kibana n'y est pas : le nom "elasticsearch" ne se
+  # résout pas chez elle (F66, F69).
   es:
     driver: bridge
     internal: true
@@ -309,3 +328,6 @@ volumes:
   kibanadata:
   ldapdata:
   ldapconfig:
+  essecrets:
+  kdcdata:
+  krb5keytab:

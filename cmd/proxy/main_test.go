@@ -15,6 +15,9 @@ listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY_ABSENT}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
@@ -28,12 +31,17 @@ elasticsearch:
 func TestRunPrintsRedactedConfig(t *testing.T) {
 	const secret = "startup-secret-value"
 	t.Setenv("ES_API_KEY", secret)
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := filepath.Join(t.TempDir(), "proxy.yaml")
 	body := []byte(`
 listen: ":8080"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 acl:
   rules:
     - name: default

@@ -35,6 +35,8 @@ type aclCasesFile struct {
 func TestACLCases(t *testing.T) {
 	const secret = "acl-cases-secret-value"
 	t.Setenv("ES_API_KEY", secret)
+	t.Setenv("ES_RUN_AS_PASSWORD", "acl-cases-run-as-secret")
+	t.Setenv("ES_SHADOW_PASSWORD", "acl-cases-shadow-secret")
 	t.Setenv("OIDC_CLIENT_SECRET", "acl-cases-oidc-secret")
 	t.Setenv("LDAP_BIND_PASSWORD", "acl-cases-ldap-secret")
 	t.Setenv("SESSION_SECRET", testSessionSecret)

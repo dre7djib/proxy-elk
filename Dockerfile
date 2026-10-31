@@ -19,6 +19,7 @@ ENTRYPOINT ["/usr/local/bin/proxy", "-config", "/etc/proxy/proxy.yaml"]
 #   docker build -t proxy-elk .
 #   docker run --rm -p 8080:8080 \
 #     -e SESSION_SECRET=... -e ES_API_KEY=... \
+#     -e ES_RUN_AS_PASSWORD=... -e ES_SHADOW_PASSWORD=... \
 #     -v "$PWD/configs/my-proxy.yaml:/etc/proxy/proxy.yaml:ro" \
 #     proxy-elk
 #   curl -sf localhost:8080/health

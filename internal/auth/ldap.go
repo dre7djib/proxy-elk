@@ -183,25 +183,9 @@ func (l *LDAP) groupFilter(userDN string) string {
 	return fmt.Sprintf("(&(objectClass=groupOfNames)(member=%s))", escaped)
 }
 
-// Authenticate runs search-then-bind for username/password and returns the
-// user's Identity (subject, email, flat group CNs). An empty password is
-// refused before any network connection (F7). The password only exists for
-// the duration of this call; it is never logged, cached or stored.
-func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Identity, error) {
-	if password == "" {
-		return nil, fmt.Errorf("ldap: empty password")
-	}
-
-	conn, err := l.dial()
-	if err != nil {
-		return nil, fmt.Errorf("ldap: connect: %w", err)
-	}
-	defer conn.Close()
-
-	if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
-		return nil, fmt.Errorf("ldap: readonly bind: %w", err)
-	}
-
+// findUser searches for username and returns its DN and mail attribute.
+// conn must already be bound as an account with read access to BaseDN.
+func (l *LDAP) findUser(conn ldapConn, username string) (userDN, email string, err error) {
 	// EscapeFilter neutralizes LDAP filter metacharacters in username (F7):
 	// an attacker cannot inject "*)(uid=*" to widen the search.
 	filter := fmt.Sprintf(l.cfg.UserFilter, ldap.EscapeFilter(username))
@@ -214,31 +198,23 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Id
 	)
 	sr, err := conn.Search(searchReq)
 	if err != nil {
-		return nil, fmt.Errorf("ldap: search: %w", err)
+		return "", "", fmt.Errorf("ldap: search: %w", err)
 	}
 	if len(sr.Entries) != 1 {
-		return nil, fmt.Errorf("ldap: user not found")
+		return "", "", fmt.Errorf("ldap: user not found")
 	}
 	entry := sr.Entries[0]
-	userDN := entry.DN
-	email := entry.GetAttributeValue("mail")
+	return entry.DN, entry.GetAttributeValue("mail"), nil
+}
 
-	if err := conn.Bind(userDN, password); err != nil {
-		return nil, fmt.Errorf("ldap: password rejected")
-	}
-
-	cacheKey := strings.ToLower(username)
+// searchGroups resolves userDN's flat group CNs, consulting and
+// refreshing the group cache keyed by cacheKey. conn must already be
+// bound as an account with read access to GroupsBaseDN.
+func (l *LDAP) searchGroups(conn ldapConn, userDN, cacheKey string) ([]string, error) {
 	if l.cfg.GroupCacheTTL > 0 {
 		if groups, ok := l.cachedGroups(cacheKey); ok {
-			return &Identity{Subject: username, Email: email, Groups: groups}, nil
+			return groups, nil
 		}
-	}
-
-	// Re-bind as the read-only account: the user bind above replaced the
-	// connection's authenticated identity, and group search must not run as
-	// the user (who may lack read access to the groups tree).
-	if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
-		return nil, fmt.Errorf("ldap: readonly re-bind: %w", err)
 	}
 	groupsReq := ldap.NewSearchRequest(
 		l.cfg.GroupsBaseDN,
@@ -259,6 +235,79 @@ func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Id
 	}
 	if l.cfg.GroupCacheTTL > 0 {
 		l.storeGroups(cacheKey, groups)
+	}
+	return groups, nil
+}
+
+// Lookup resolves username to an Identity (email, flat group CNs) via the
+// read-only account, with no password check. Used by Kerberos (F2's
+// counterpart for SPNEGO), which authenticates the ticket itself and has
+// no password to bind with. A username absent from the directory fails:
+// no groups, so no ACL match.
+func (l *LDAP) Lookup(ctx context.Context, username string) (*Identity, error) {
+	conn, err := l.dial()
+	if err != nil {
+		return nil, fmt.Errorf("ldap: connect: %w", err)
+	}
+	defer conn.Close()
+
+	if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
+		return nil, fmt.Errorf("ldap: readonly bind: %w", err)
+	}
+	userDN, email, err := l.findUser(conn, username)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := l.searchGroups(conn, userDN, strings.ToLower(username))
+	if err != nil {
+		return nil, err
+	}
+	return &Identity{Subject: username, Email: email, Groups: groups}, nil
+}
+
+// Authenticate runs search-then-bind for username/password and returns the
+// user's Identity (subject, email, flat group CNs). An empty password is
+// refused before any network connection (F7). The password only exists for
+// the duration of this call; it is never logged, cached or stored.
+func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Identity, error) {
+	if password == "" {
+		return nil, fmt.Errorf("ldap: empty password")
+	}
+
+	conn, err := l.dial()
+	if err != nil {
+		return nil, fmt.Errorf("ldap: connect: %w", err)
+	}
+	defer conn.Close()
+
+	if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
+		return nil, fmt.Errorf("ldap: readonly bind: %w", err)
+	}
+	userDN, email, err := l.findUser(conn, username)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := conn.Bind(userDN, password); err != nil {
+		return nil, fmt.Errorf("ldap: password rejected")
+	}
+
+	cacheKey := strings.ToLower(username)
+	if l.cfg.GroupCacheTTL > 0 {
+		if groups, ok := l.cachedGroups(cacheKey); ok {
+			return &Identity{Subject: username, Email: email, Groups: groups}, nil
+		}
+	}
+
+	// Re-bind as the read-only account: the user bind above replaced the
+	// connection's authenticated identity, and group search must not run as
+	// the user (who may lack read access to the groups tree).
+	if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
+		return nil, fmt.Errorf("ldap: readonly re-bind: %w", err)
+	}
+	groups, err := l.searchGroups(conn, userDN, cacheKey)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Identity{Subject: username, Email: email, Groups: groups}, nil

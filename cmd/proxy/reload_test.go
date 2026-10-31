@@ -11,11 +11,16 @@ import (
 
 func TestPolicyStoreReloadLoadsPolicy(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeTestConfig(`
 listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ` + minimalACL)
 
 	store := newPolicyStore()
@@ -33,11 +38,16 @@ elasticsearch:
 
 func TestPolicyStoreReloadKeepsOldPolicyOnInvalidFile(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeTestConfig(`
 listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 ` + minimalACL)
 
 	store := newPolicyStore()
@@ -53,6 +63,9 @@ listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -71,11 +84,16 @@ elasticsearch:
 
 func TestPolicyStoreReloadPicksUpNewRules(t *testing.T) {
 	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
 	path := writeTestConfig(`
 listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 acl:
   rules:
     - name: r1
@@ -98,6 +116,9 @@ listen: ":0"
 elasticsearch:
   url: https://elasticsearch:9200
   api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
 acl:
   rules:
     - name: r1
