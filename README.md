@@ -2,8 +2,6 @@
 
 Authentication and authorization proxy in front of self-hosted Elasticsearch, with an AI assistant integrated into Kibana through a minimal plugin. Open source (Apache-2.0).
 
-> **Status: J1 done.** SP-01 to SP-08 (spike) and J1-01 to J1-15 are done (see `spike/` and the spike plan): authentication, ACL, audit, secrets, and the Elasticsearch relay (`run_as`) are in the product binary — a proxy usable on its own in front of Elasticsearch, not yet a published release. J2 (AI assistant) is next.
-
 ## Why
 
 Some of Elasticsearch's security features (LDAP and Active Directory, SSO, audit) are reserved for paid tiers. This project brings them in front of Elasticsearch as an external proxy, without touching Elastic's code or its license check.
@@ -45,7 +43,7 @@ The image runs as non-root (uid 65532) and never embeds `configs/proxy.example.y
 
 ## Contributing
 
-The project does not yet accept external contributions. The rules (DCO or CLA) will be defined before the first public release.
+The project does not yet accept external contributions. When it does, each commit carries a `Signed-off-by` line under the [Developer Certificate of Origin 1.1](DCO).
 
 Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/). Enable the enforcing hook once per clone:
 
