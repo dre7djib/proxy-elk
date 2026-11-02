@@ -25,7 +25,7 @@ func (f fakeResolver) Resolve(_ context.Context, names []string) ([]string, erro
 
 // TestAliasDoesNotBypassACL: a rule granting "public" must not let a caller
 // reach the "secret" index an alias with that name actually points to
-// (F15). The caller always gets decided against resolved, concrete names.
+//. The caller always gets decided against resolved, concrete names.
 func TestAliasDoesNotBypassACL(t *testing.T) {
 	resolver := fakeResolver{"public": {"secret"}}
 	p, err := Parse([]Rule{{

@@ -8,7 +8,7 @@ import (
 )
 
 // DecideContext carries the request properties a rule's optional
-// conditions (F21) check against. RemoteAddr is the connection's real
+// conditions check against. RemoteAddr is the connection's real
 // network address ("host:port" or a bare IP) — never a client-supplied
 // header like X-Forwarded-For, which would be forgeable. Time is the
 // clock Decide should use; tests inject a fixed value instead of
@@ -20,8 +20,7 @@ type DecideContext struct {
 }
 
 // matchesConditions reports whether ctx satisfies every condition set on
-// r. A condition r doesn't set always matches (same behavior as before
-// this ticket).
+// r. A condition r doesn't set always matches.
 func (r compiledRule) matchesConditions(ctx DecideContext) bool {
 	if len(r.sourceNets) > 0 {
 		ip := net.ParseIP(hostOnly(ctx.RemoteAddr))

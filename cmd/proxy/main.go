@@ -69,7 +69,7 @@ func main() {
 }
 
 // cliFlags is every flag the binary accepts: -config always; the rest
-// only matter with -simulate (F22).
+// only matter with -simulate.
 type cliFlags struct {
 	configPath string
 	simulate   bool
@@ -87,7 +87,7 @@ func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
 	fs.SetOutput(stderr)
 	var f cliFlags
 	fs.StringVar(&f.configPath, "config", "./configs/proxy.yaml", "config file")
-	fs.BoolVar(&f.simulate, "simulate", false, "simulate an ACL decision instead of starting the server (F22)")
+	fs.BoolVar(&f.simulate, "simulate", false, "simulate an ACL decision instead of starting the server")
 	fs.StringVar(&f.subject, "subject", "", "simulate: caller subject")
 	fs.StringVar(&f.groups, "groups", "", "simulate: comma-separated caller groups")
 	fs.StringVar(&f.index, "index", "", "simulate: index name")
@@ -102,7 +102,7 @@ func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
 }
 
 // runSimulate loads the config, builds the ACL policy, and prints the
-// Decide outcome for one request (F22): "allow <rule>" or the Decide
+// Decide outcome for one request: "allow <rule>" or the Decide
 // error text. It never starts listening. The returned error is only for
 // an invalid config or -time value (exit 1 from main); the decision
 // itself is the printed line, not the exit code.
@@ -141,7 +141,7 @@ func runSimulate(f cliFlags, stdout, stderr io.Writer) error {
 }
 
 // PolicyStore holds the ACL policy currently in effect, replaced
-// atomically by Reload (F23, SIGHUP). The zero value has no policy yet.
+// atomically by Reload (SIGHUP). The zero value has no policy yet.
 type PolicyStore struct {
 	policy atomic.Pointer[acl.Policy]
 }
@@ -215,10 +215,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 // buildMux wires every enabled login route, GET /auth/me, and the
-// Elasticsearch relay (J1-15, F2) onto a mux that denies everything else
-// by default (F3's spirit). OIDC and LDAP share one Sessions: whichever
+// Elasticsearch relay onto a mux that denies everything else
+// by default (spirit). OIDC and LDAP share one Sessions: whichever
 // login succeeds, OnSuccess issues the same cookie. policy is called once
-// per relayed request, so a live ACL reload (SIGHUP, F23) applies without
+// per relayed request, so a live ACL reload (SIGHUP) applies without
 // rebuilding the mux.
 func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, error) {
 	oidcActive := cfg.OIDC.Issuer != ""

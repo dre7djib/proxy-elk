@@ -8,7 +8,7 @@ interface AskRouteDeps {
 
 // Shape of the token returned by the proxy on /_spike/identity-token (see
 // spike/proxy/main.go, mintIdentityTokenMiddleware). The plugin neither decrypts
-// nor verifies anything itself (F80): it only reads the `token` field to
+// nor verifies anything itself: it only reads the `token` field to
 // relay it to the engine, verbatim.
 interface IdentityTokenResponse {
   token: string;
@@ -23,8 +23,8 @@ interface EngineWhoamiResponse {
 }
 
 // registerAskRoute exposes POST /api/spike_ask/ask: this plugin's only
-// route (SP-06). It materializes the variant to test first for
-// F78-F82 (see the spike plan, after step 6): obtain the short-lived token
+// route. It materializes the variant to test first for
+// (see the spike plan, after step 6): obtain the short-lived token
 // *via Elasticsearch*, with the current user's session, rather than
 // through a separate channel.
 export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
@@ -40,7 +40,7 @@ export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
 
       // Central point of the spike: asCurrentUser, NOT asInternalUser. The
       // scoped ES client forwards alice's original HTTP request
-      // Authorization/cookie to the proxy (F2/F12: neither the plugin nor this
+      // Authorization/cookie to the proxy (neither the plugin nor this
       // code ever sees her password, only what Kibana has
       // already negotiated for her session). Using asInternalUser here would mint
       // a token for kibana_system, not for the user: finding to
@@ -61,7 +61,7 @@ export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
           });
         }
 
-        // Relay unmodified (F80): no key read, no claim
+        // Relay unmodified: no key read, no claim
         // rewritten; the engine Authorization header contains nothing
         // other than what the proxy signed.
         const engineResponse = await fetch(`${deps.engineUrl}/whoami`, {

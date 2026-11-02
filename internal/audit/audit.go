@@ -1,4 +1,4 @@
-// Package audit writes one JSON line per access request to stdout (F49):
+// Package audit writes one JSON line per access request to stdout:
 // source, user and the allow/deny decision. Health and metrics scrapes
 // never produce a line, and nothing from the request body, cookies or
 // Authorization header is ever logged.
@@ -17,7 +17,7 @@ import (
 
 // Source identifies which caller path produced the record. The HTTP
 // middleware in this package always writes SourceUI; SourceMCP exists for
-// the MCP server (J3) to use the same Logger once it calls Write itself.
+// the MCP server (phase 3) to use the same Logger once it calls Write itself.
 // There is no client-supplied header for this — it would be forgeable.
 type Source string
 

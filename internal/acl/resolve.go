@@ -10,7 +10,7 @@ import (
 )
 
 // IndexResolver turns index/alias names into the concrete index names they
-// cover (F15). Deciding on aliases would let a rule written for an alias
+// cover. Deciding on aliases would let a rule written for an alias
 // silently cover whatever index it points to; ACL always decides on
 // resolved, concrete names.
 type IndexResolver interface {

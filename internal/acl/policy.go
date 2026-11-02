@@ -1,7 +1,7 @@
 // Package acl decides which indices and actions a caller may use.
 //
 // Rules are allow-only; anything not explicitly allowed is denied
-// (fail-closed, F14/F19). The MVP only ever grants the "read" action.
+// (fail-closed). The MVP only ever grants the "read" action.
 package acl
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 // Action is a permission a rule can grant, or a category Classify derives
-// from a request (F18). The only value Parse accepts in a rule's YAML is
+// from a request. The only value Parse accepts in a rule's YAML is
 // ActionRead; ActionWrite and ActionClusterAdmin exist so Decide can
 // categorize and deny them, never so a rule can grant them.
 type Action string
@@ -24,13 +24,13 @@ const (
 )
 
 // defaultSystemIndices is used when a Policy's system index list isn't
-// configured. F17: a wildcard rule pattern never covers these.
+// configured.: a wildcard rule pattern never covers these.
 var defaultSystemIndices = []string{".kibana*", ".security*", ".tasks*", ".enrich-*"}
 
 // Rule is one YAML-configured ACL rule. Exactly one of Users/Groups must be
 // non-empty for the rule to ever match (enforced by Parse). SourceIPs,
-// Methods and Time are optional conditions (F21): absent, the rule behaves
-// exactly as before this ticket. All conditions on a rule must match for
+// Methods and Time are optional conditions: absent, the rule behaves
+// as if those conditions were not there. All conditions on a rule must match for
 // it to apply.
 type Rule struct {
 	Name    string   `yaml:"name" json:"name"`
@@ -75,9 +75,9 @@ type Policy struct {
 	systemIndices []string
 }
 
-// Parse validates rules (F19) and compiles them into a Policy. knownGroups,
+// Parse validates rules and compiles them into a Policy. knownGroups,
 // when non-empty, restricts which groups a rule may reference; an unknown
-// group fails validation. systemIndices overrides the default F17 system
+// group fails validation. systemIndices overrides the default system
 // index patterns; empty uses the default.
 func Parse(rules []Rule, knownGroups []string, systemIndices []string) (*Policy, error) {
 	if len(rules) == 0 {

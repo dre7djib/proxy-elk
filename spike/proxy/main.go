@@ -1,14 +1,14 @@
-// Spike proxy for SP-02/SP-03: a reverse proxy between Kibana and
-// Elasticsearch that logs every call as JSON on stdout (SP-02) and,
-// from SP-03 onward, validates LDAP logins (search-then-bind) then talks to
+// Spike proxy: a reverse proxy between Kibana and
+// Elasticsearch that logs every call as JSON on stdout and
+// validates LDAP logins (search-then-bind) then talks to
 // Elasticsearch with a service account while impersonating the
 // user (`es-security-runas-user`, spike path A). Calls from
 // service accounts (kibana_system, elastic, proxy_service) and anything
 // that is not Basic auth (ApiKey, Bearer, no header) pass through
-// unmodified. From SP-06, the proxy also answers itself (without relaying to
+// unmodified. The proxy also answers itself (without relaying to
 // Elasticsearch) on POST /_spike/identity-token: it issues a short-lived
-// signed token (JWT RS256, F78) carrying the request's already-authenticated identity.
-// Throwaway code: no tests, ACL/J1 out of scope.
+// signed token (JWT RS256) carrying the request's already-authenticated identity.
+// Throwaway code: no tests, ACL out of scope.
 package main
 
 import (
@@ -80,8 +80,8 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
-// ldapConfig groups the search-then-bind settings (F4) and, from
-// SP-06, group lookup (the `groups` claim of the short-lived token, F78).
+// ldapConfig groups the search-then-bind settings and, from
+//, group lookup (the `groups` claim of the short-lived token).
 type ldapConfig struct {
 	URL              string
 	ReadonlyDN       string
@@ -92,16 +92,16 @@ type ldapConfig struct {
 }
 
 // proxyServiceConfig groups the credentials of the service account used
-// to talk to Elasticsearch once the LDAP identity is validated (F2).
+// to talk to Elasticsearch once the LDAP identity is validated.
 type proxyServiceConfig struct {
 	User     string
 	Password string
 }
 
-// jwtConfig groups what is needed to issue the short-lived token (F78, SP-06):
+// jwtConfig groups what is needed to issue the short-lived token:
 // the proxy's private key (never shared, see spike/keys/README.md), the
 // expected audience (the dummy engine) and the validity duration (5 to
-// 15 min required by F78; the spike keeps the lower bound, 5 min, to
+// 15 min required by; the spike keeps the lower bound, 5 min, to
 // reduce the abuse window during tests).
 type jwtConfig struct {
 	PrivateKey *rsa.PrivateKey
@@ -133,13 +133,13 @@ func main() {
 		Password: os.Getenv("PROXY_SERVICE_PASSWORD"),
 	}
 	if proxySvc.Password == "" {
-		log.Fatal("PROXY_SERVICE_PASSWORD missing: required to talk to Elasticsearch with run_as (SP-03)")
+		log.Fatal("PROXY_SERVICE_PASSWORD missing: required to talk to Elasticsearch with run_as")
 	}
 	if ldapCfg.ReadonlyPassword == "" {
-		log.Fatal("LDAP_READONLY_PASSWORD missing: required for search-then-bind (SP-03, F4)")
+		log.Fatal("LDAP_READONLY_PASSWORD missing: required for search-then-bind")
 	}
 
-	// SP-03 runtime finding: POST /_security/profile/_activate (called
+	// runtime finding: POST /_security/profile/_activate (called
 	// by Kibana right after login to create/activate the user
 	// profile) is NOT sent with the user's Basic auth: it
 	// is sent with kibana_system credentials, and carries the password
@@ -154,14 +154,14 @@ func main() {
 	// this specific call, once the LDAP password has been re-checked.
 	shadowPassword := os.Getenv("NATIVE_SHADOW_PASSWORD")
 	if shadowPassword == "" {
-		log.Fatal("NATIVE_SHADOW_PASSWORD missing: required for /_security/profile/_activate (SP-03)")
+		log.Fatal("NATIVE_SHADOW_PASSWORD missing: required for /_security/profile/_activate")
 	}
 
 	// Accounts that pass through the proxy without going through LDAP: the
 	// service accounts (kibana_system, proxy_service) and the native superuser
-	// (elastic), kept for fallback logins (SP-01). From SP-06,
-	// these are also the accounts the proxy refuses to mint a short-lived
-	// token for (F78): a token represents a real user, not a
+	// (elastic), kept for fallback logins.
+	// These are also the accounts the proxy refuses to mint a short-lived
+	// token for: a token represents a real user, not a
 	// service account.
 	passthrough := map[string]bool{
 		"elastic":       true,
@@ -169,13 +169,13 @@ func main() {
 		proxySvc.User:   true,
 	}
 
-	// SP-06: proxy private key to sign the short-lived token (F78, F80: the
+	// Proxy private key to sign the short-lived token: the
 	// plugin and the engine never hold more than the public part,
-	// see spike/keys/README.md). No rotation here (F81 = J2-03): a
+	// see spike/keys/README.md. No rotation here: a
 	// single key pair for the whole spike.
 	jwtPrivateKey, err := loadRSAPrivateKey(getenv("JWT_PRIVATE_KEY_PATH", "/keys/private.pem"))
 	if err != nil {
-		log.Fatalf("invalid JWT private key (SP-06, F78): %v", err)
+		log.Fatalf("invalid JWT private key: %v", err)
 	}
 	jwtCfg := jwtConfig{
 		PrivateKey: jwtPrivateKey,
@@ -193,7 +193,7 @@ func main() {
 	auth := authMiddleware(mint, ldapCfg, proxySvc, passthrough, authCache)
 	handler := logMiddleware(auth)
 
-	log.Printf("proxy SP-02..SP-06: listening on %s, relaying to %s, LDAP %s, short-lived token aud=%s", listenAddr, upstream, ldapCfg.URL, jwtCfg.Audience)
+	log.Printf("proxy ..: listening on %s, relaying to %s, LDAP %s, short-lived token aud=%s", listenAddr, upstream, ldapCfg.URL, jwtCfg.Audience)
 	if err := http.ListenAndServe(listenAddr, handler); err != nil {
 		log.Fatal(err)
 	}
@@ -233,16 +233,16 @@ func logMiddleware(next http.Handler) http.Handler {
 }
 
 // authMiddleware intercepts LDAP Basic auth and replaces it with the
-// service account + es-security-runas-user (F2, F4, F12). Everything else (no
+// service account + es-security-runas-user. Everything else (no
 // Authorization, ApiKey, Bearer, Basic of a service account) passes through
-// unmodified: that is the SP-02 scope, unchanged.
+// unmodified: that is the scope, unchanged.
 func authMiddleware(next http.Handler, cfg ldapConfig, svc proxyServiceConfig, passthrough map[string]bool, cache *ldapAuthCache) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		info, _ := r.Context().Value(authInfoCtxKey).(*authInfo)
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Basic ") {
-			// No header, ApiKey or Bearer: pass-through (SP-02).
+			// No header, ApiKey or Bearer: pass-through.
 			if info != nil {
 				info.Scheme = "passthrough"
 			}
@@ -260,7 +260,7 @@ func authMiddleware(next http.Handler, cfg ldapConfig, svc proxyServiceConfig, p
 		}
 
 		if passthrough[user] {
-			// Service account or native superuser: unchanged (SP-02).
+			// Service account or native superuser: unchanged.
 			if info != nil {
 				info.Scheme = "passthrough"
 				info.User = user
@@ -270,7 +270,7 @@ func authMiddleware(next http.Handler, cfg ldapConfig, svc proxyServiceConfig, p
 		}
 
 		if password == "" {
-			// Never an anonymous/unauthenticated bind (F7): an empty
+			// Never an anonymous/unauthenticated bind: an empty
 			// password is always denied, LDAP or not.
 			if info != nil {
 				info.Scheme = "ldap-denied"
@@ -296,7 +296,7 @@ func authMiddleware(next http.Handler, cfg ldapConfig, svc proxyServiceConfig, p
 		}
 
 		// Success: never relay the LDAP password to
-		// Elasticsearch (F2, F12). The service account talks to ES and
+		// Elasticsearch. The service account talks to ES and
 		// impersonates the user via the run_as header.
 		r.Header.Set("Authorization", basicAuthHeader(svc.User, svc.Password))
 		r.Header.Set("es-security-runas-user", user)
@@ -309,7 +309,7 @@ func authMiddleware(next http.Handler, cfg ldapConfig, svc proxyServiceConfig, p
 	})
 }
 
-// ldapAuthenticate does a search-then-bind (F4): bind with the
+// ldapAuthenticate does a search-then-bind: bind with the
 // read-only account, search for the DN by uid, then bind with the supplied password.
 // Returns the DN if authentication succeeds.
 func ldapAuthenticate(cfg ldapConfig, username, password string) (string, error) {
@@ -323,7 +323,7 @@ func ldapAuthenticate(cfg ldapConfig, username, password string) (string, error)
 		return "", fmt.Errorf("read-only account bind: %w", err)
 	}
 
-	// Anti-injection escaping (F7): ldap.EscapeFilter neutralizes
+	// Anti-injection escaping: ldap.EscapeFilter neutralizes
 	// special characters in an LDAP filter.
 	filter := fmt.Sprintf("(uid=%s)", ldap.EscapeFilter(username))
 	searchReq := ldap.NewSearchRequest(
@@ -353,7 +353,7 @@ func ldapAuthenticate(cfg ldapConfig, username, password string) (string, error)
 // authenticateLDAPCached does a search-then-bind via ldapAuthenticate, unless
 // a recent success for the same user/password pair is in
 // cache. Returns whether authentication is valid and its duration (0 if served
-// from cache). An empty password is always denied (F7).
+// from cache). An empty password is always denied.
 func authenticateLDAPCached(cfg ldapConfig, cache *ldapAuthCache, user, password string) (ok bool, ldapMS int64) {
 	if password == "" {
 		return false, 0
@@ -462,7 +462,7 @@ func profileActivateMiddleware(next http.Handler, cfg ldapConfig, cache *ldapAut
 }
 
 // mintIdentityTokenMiddleware answers, without ever relaying to Elasticsearch,
-// on POST /_spike/identity-token (SP-06, F78): it issues a short-lived
+// on POST /_spike/identity-token: it issues a short-lived
 // signed token (JWT RS256, TTL jwtCfg.TTL) carrying the identity already authenticated by
 // authMiddleware. This is the "token requested via Elasticsearch, with
 // the user's session" variant chosen first by the spike plan
@@ -473,9 +473,9 @@ func profileActivateMiddleware(next http.Handler, cfg ldapConfig, cache *ldapAut
 //   - "ldap-runas": the request carried LDAP Basic auth, already resolved and
 //     rewritten as run_as. The identity is known without an extra call —
 //     this is the expected path, since Kibana replays alice's
-//     password on every asCurrentUser call (observed as of SP-02/SP-03).
+//     password on every asCurrentUser call (observed as of).
 //   - "passthrough" with no user already known: the request carried an
-//     ApiKey or a Bearer (watch point documented in this ticket's
+//     ApiKey or a Bearer (watch point documented in the
 //     plan). A real user may still hide behind a
 //     Kibana session ApiKey; this path introspects the identity via
 //     GET /_security/_authenticate on Elasticsearch, relaying the original
@@ -496,7 +496,7 @@ func mintIdentityTokenMiddleware(next http.Handler, cfg ldapConfig, jwtCfg jwtCo
 			return
 		}
 
-		// Runtime finding (SP-06, plugin actually compiled): the official
+		// Runtime finding (plugin actually compiled): the official
 		// Elasticsearch client used by asCurrentUser.transport.request
 		// on the plugin side does a "product check" on every response and rejects
 		// (ProductNotSupportedError) anything that does not carry this header —
@@ -529,7 +529,7 @@ func mintIdentityTokenMiddleware(next http.Handler, cfg ldapConfig, jwtCfg jwtCo
 			}
 			resolved, err := resolveIdentityViaAuthenticate(upstream, authHeader)
 			if err != nil {
-				log.Printf("_authenticate introspection failed (SP-06): %v", err)
+				log.Printf("_authenticate introspection failed: %v", err)
 				info.Scheme = "jwt-denied-apikey"
 				http.Error(w, "identity not found with Elasticsearch", http.StatusUnauthorized)
 				return
@@ -553,16 +553,16 @@ func mintIdentityTokenMiddleware(next http.Handler, cfg ldapConfig, jwtCfg jwtCo
 		groups, err := lookupLDAPGroups(cfg, user)
 		if err != nil {
 			// Not blocking: the dummy engine does no group-based
-			// authorization in this spike (F79 only checks
+			// authorization in this spike (it only checks
 			// signature/expiration/audience); a token with an empty
 			// groups list is better than a total denial on an LDAP glitch.
-			log.Printf("LDAP group lookup failed for %s (SP-06): %v", user, err)
+			log.Printf("LDAP group lookup failed for %s: %v", user, err)
 			groups = []string{}
 		}
 
 		token, err := mintJWT(jwtCfg, user, groups)
 		if err != nil {
-			log.Printf("token signing failed (SP-06): %v", err)
+			log.Printf("token signing failed: %v", err)
 			http.Error(w, "token issuance failed", http.StatusInternalServerError)
 			return
 		}
@@ -582,9 +582,9 @@ func mintIdentityTokenMiddleware(next http.Handler, cfg ldapConfig, jwtCfg jwtCo
 // Elasticsearch, relaying the supplied Authorization header, to resolve
 // the user behind an ApiKey or Bearer that this proxy does not decrypt
 // itself. Finding to verify by running the spike (see
-// spike/README.md#sp-06): SP-02/SP-03 show that Kibana instead replays
+// spike/README.md#sp-06): show that Kibana instead replays
 // Basic auth on asCurrentUser, so this path may never
-// trigger in practice with the LDAP flow kept since SP-03.
+// trigger in practice with the LDAP flow kept since.
 func resolveIdentityViaAuthenticate(upstream, authHeader string) (string, error) {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(upstream, "/")+"/_security/_authenticate", nil)
 	if err != nil {
@@ -615,8 +615,8 @@ func resolveIdentityViaAuthenticate(upstream, authHeader string) (string, error)
 }
 
 // lookupLDAPGroups looks up the groupOfNames groups of which the user is
-// a member (F78: the short-lived token carries the groups, not only the
-// username). Uses the search-then-bind read-only account (F4);
+// a member (the short-lived token carries the groups, not only the
+// username). Uses the search-then-bind read-only account;
 // no user password is needed here, unlike
 // ldapAuthenticate — this is a search, not a password
 // check.
@@ -656,11 +656,11 @@ func lookupLDAPGroups(cfg ldapConfig, username string) ([]string, error) {
 	return groups, nil
 }
 
-// mintJWT builds the short-lived token (F78): RS256, issuer=spike-proxy (or
+// mintJWT builds the short-lived token: RS256, issuer=spike-proxy (or
 // JWT_ISSUER), audience=engine (JWT_AUDIENCE), subject=user, claim
 // "groups", expiration in jwtCfg.TTL. Asymmetric signature: only the
-// proxy holds the private key (F80: neither the plugin nor the engine needs
-// it to issue, only to verify with the public key, F79).
+// proxy holds the private key (neither the plugin nor the engine needs
+// it to issue, only to verify with the public key).
 func mintJWT(cfg jwtConfig, subject string, groups []string) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
@@ -700,7 +700,7 @@ func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-// ldapAuthCache avoids an LDAP bind on every call: SP-02 measured ~145
+// ldapAuthCache avoids an LDAP bind on every call: measured ~145
 // GET /_security/_authenticate and ~148 POST /_security/user/_has_privileges
 // per login + Discover cycle. Without a cache, each would trigger a
 // search-then-bind and make the Kibana UI perceptibly slower.
@@ -764,7 +764,7 @@ func basicAuthHeader(user, password string) string {
 }
 
 // isSecurityCall spots calls to the Elasticsearch security API
-// (authentication, roles, privileges...), useful for SP-03 and F67.
+// (authentication, roles, privileges...), useful for and.
 func isSecurityCall(path string) bool {
 	return strings.HasPrefix(path, "/_security") || strings.HasPrefix(path, "/_xpack/security")
 }

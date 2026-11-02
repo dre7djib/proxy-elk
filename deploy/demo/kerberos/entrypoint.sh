@@ -2,7 +2,7 @@
 # Bootstraps the demo KDC on first boot (idempotent: /var/lib/krb5kdc is
 # a named volume, so a restart skips straight to step 4 and just starts
 # krb5kdc). See the plan (kerberos_spnego_sso): two SPNs land in the
-# proxy's keytab because the client requests a ticket for the hostname
+# proxy's keytab because the client requests authentication for the hostname
 # in the URL it called — the browser uses proxy.demo.local, the
 # krb5-user container (same docker network) uses proxy.
 set -euo pipefail

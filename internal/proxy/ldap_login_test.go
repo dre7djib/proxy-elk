@@ -182,7 +182,7 @@ func TestLDAPHandleLoginSuccessResetsLockout(t *testing.T) {
 	}
 }
 
-// TestLDAPHandleLoginNeverLeaksPassword covers F12 hygiene: the body's
+// TestLDAPHandleLoginNeverLeaksPassword covers hygiene: the body's
 // password must never reach the response body or any response header
 // (including Set-Cookie), on both the success and the failure path.
 func TestLDAPHandleLoginNeverLeaksPassword(t *testing.T) {

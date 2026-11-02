@@ -188,7 +188,7 @@ func TestAuthenticateWrongPassword(t *testing.T) {
 	}
 }
 
-// TestAuthenticateInjectionBattery (F7): every one of these usernames must
+// TestAuthenticateInjectionBattery: every one of these usernames must
 // fail authentication, and the filter the directory sees must carry the
 // escaped form, never the raw metacharacters.
 func TestAuthenticateInjectionBattery(t *testing.T) {

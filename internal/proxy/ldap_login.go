@@ -19,7 +19,7 @@ type LDAPDirectory = auth.PasswordAuthenticator
 type LDAPLogin struct {
 	Directory LDAPDirectory
 	// Limiter blocks repeated failed logins for a (username, IP) pair
-	// (F8). Nil disables lockout.
+	//. Nil disables lockout.
 	Limiter   *auth.Limiter
 	OnSuccess func(w http.ResponseWriter, r *http.Request, id auth.Identity)
 }
@@ -33,7 +33,7 @@ type ldapLoginRequest struct {
 // directory, and never reports why a login failed: a wrong password, an
 // unknown user and a lockout all get the same bare 401, so the response
 // leaks nothing about the directory's contents or about the lockout state
-// (F8).
+//.
 func (l *LDAPLogin) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	var req ldapLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

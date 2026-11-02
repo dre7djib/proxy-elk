@@ -22,7 +22,7 @@ type Config struct {
 	secrets secretSet
 }
 
-// Limits is the optional per-role quota section (F25): absent (Default
+// Limits is the optional per-role quota section: absent (Default
 // nil and Roles empty) means no plafond at all, same as today. Roles
 // matches the caller's groups against a quota; Default applies when no
 // role matches. See internal/limits for how they're combined.
@@ -31,10 +31,10 @@ type Limits struct {
 	Roles   []limits.Role `yaml:"roles" json:"roles"`
 }
 
-// ACL is the declarative, read-only access policy (F14/F19): a non-empty
+// ACL is the declarative, read-only access policy: a non-empty
 // set of allow rules, fail-closed otherwise. KnownGroups, when set,
 // restricts which groups rules may reference. SystemIndices overrides the
-// F17 default system index patterns.
+// default system index patterns.
 type ACL struct {
 	KnownGroups   []string   `yaml:"known_groups" json:"known_groups"`
 	SystemIndices []string   `yaml:"system_indices" json:"system_indices"`
@@ -50,12 +50,12 @@ type Elasticsearch struct {
 
 	// RunAsUser/RunAsPassword is the service account the relay
 	// authenticates as upstream once a caller's identity is resolved and
-	// allowed; es-security-runas-user then impersonates that caller (F2).
+	// allowed; es-security-runas-user then impersonates that caller.
 	RunAsUser     string `yaml:"run_as_user" json:"run_as_user"`
 	RunAsPassword string `yaml:"run_as_password" json:"run_as_password"`
 	// ShadowPassword is the native-realm secret substituted into
 	// POST /_security/profile/_activate for an LDAP user, once their LDAP
-	// password has been re-checked (F2): never typed by the user, never
+	// password has been re-checked: never typed by the user, never
 	// sent to LDAP.
 	ShadowPassword string `yaml:"shadow_password" json:"shadow_password"`
 	// PassthroughUsers relay unchanged, with their own Basic credentials,
@@ -77,7 +77,7 @@ type Kibana struct {
 
 // Kerberos enables SPNEGO/Negotiate login in place of the /auth/kibana
 // form: the browser never types a password, the proxy validates the
-// ticket against KeytabFile (a mounted binary file, never a ${file:}
+// SPNEGO token against KeytabFile (a mounted binary file, never a ${file:}
 // secret reference — that would land it in the secret mask) and resolves
 // groups via LDAP (required alongside, since Kerberos carries none
 // itself). Empty KeytabFile disables the whole path.
@@ -136,7 +136,7 @@ type LDAP struct {
 	LockoutFor    string `yaml:"lockout_for" json:"lockout_for"`
 }
 
-// JWT configures verification of machine-to-machine Bearer tokens (F13):
+// JWT configures verification of machine-to-machine Bearer tokens:
 // the proxy checks a JWT an external IdP already issued, it never emits
 // one. Empty Issuer means JWT Bearer auth is disabled; no session cookie
 // is involved.

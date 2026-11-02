@@ -6,7 +6,7 @@ import (
 )
 
 // clusterAdminPrefixes are path prefixes Classify treats as cluster_admin
-// (F18) regardless of HTTP method: these are administrative/informational
+// regardless of HTTP method: these are administrative/informational
 // endpoints, not data reads, even when fetched with GET.
 var clusterAdminPrefixes = []string{
 	"/_cluster", "/_security", "/_nodes", "/_license", "/_snapshot", "/_slm", "/_tasks", "/_cat",
@@ -19,7 +19,7 @@ var readPOSTSuffixes = []string{
 }
 
 // Classify derives the Action an upstream Elasticsearch request
-// represents from its HTTP method and path (F18). Only ActionRead can
+// represents from its HTTP method and path. Only ActionRead can
 // ever be granted by a rule (Parse rejects any other action in YAML), so
 // a write or cluster_admin request is always denied by Decide regardless
 // of index coverage.

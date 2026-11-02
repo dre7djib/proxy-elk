@@ -82,7 +82,7 @@ func TestBuildMuxDeniesUnknownRoutesByDefault(t *testing.T) {
 	}
 
 	// Anonymous catch-all request: the relay never calls Elasticsearch
-	// without a resolved identity (J1-15).
+	// without a resolved identity.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
 	if rec.Code != http.StatusUnauthorized {
@@ -367,7 +367,7 @@ jwt:
 	}
 
 	// No route to mint a JWT exists: the proxy only ever verifies one an
-	// external IdP already issued (guard against F78 confusion). It falls
+	// external IdP already issued (guard against confusion). It falls
 	// to the relay's catch-all, which never calls Elasticsearch without a
 	// resolved identity, and this request carries none.
 	rec := httptest.NewRecorder()

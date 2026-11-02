@@ -11,7 +11,7 @@ elasticsearch:
   api_key: "${env:ES_API_KEY}"
   # run_as_user/run_as_password: the service account the relay
   # authenticates as upstream; es-security-runas-user then impersonates
-  # the caller once ACL allows the request (F2).
+  # the caller once ACL allows the request.
   run_as_user: proxy_service
   run_as_password: "${env:ES_RUN_AS_PASSWORD}"
   # shadow_password: native-realm secret substituted into
@@ -62,7 +62,7 @@ ldap:
   failure_window: 15m
   lockout_for: 15m
 
-# Machine-to-machine access (F13): the proxy verifies a Bearer JWT an
+# Machine-to-machine access: the proxy verifies a Bearer JWT an
 # external IdP already issued; it never mints one. Omit the jwt section
 # entirely to disable it. No session cookie is involved for these callers.
 jwt:
@@ -71,12 +71,12 @@ jwt:
   jwks_url: https://idp.example/realms/demo/protocol/openid-connect/certs
   # groups_claim: groups
 
-# Declarative, read-only access policy (F14/F15/F17/F19): allow rules only,
+# Declarative, read-only access policy: allow rules only,
 # fail-closed. Required — the proxy refuses to start without at least one
 # rule. A rule matches a caller if their subject is in users, or any of
 # their groups intersects groups; indices are glob patterns (path.Match)
-# resolved against concrete index names (aliases are resolved first, F15).
-# Classify (F18) turns an upstream request's method+path into read, write
+# resolved against concrete index names (aliases are resolved first).
+# Classify turns an upstream request's method+path into read, write
 # or cluster_admin; a rule can only ever grant read (actions: [write] or
 # [cluster_admin] fails to load) — the index being covered never grants a
 # write or a cluster_admin request.
@@ -94,7 +94,7 @@ acl:
       indices: [alice-scratch]
       actions: [read]
 
-      # Optional conditions (F21), all absent here so this rule behaves
+      # Optional conditions, all absent here so this rule behaves
       # exactly as above. Every condition set on a rule must match; a
       # condition a rule doesn't set never restricts it.
       # source_ips: ["10.0.0.0/8"]   # IP or CIDR, matched against RemoteAddr
@@ -105,7 +105,7 @@ acl:
       #   to: "18:00"
       #   days: [Mon, Tue, Wed, Thu, Fri]   # omit for every day
 
-# Per-role quotas (F25): omit the whole section for no plafond at all
+# Per-role quotas: omit the whole section for no plafond at all
 # (today's behavior). Each roles entry's groups must be disjoint from
 # every other entry's; a caller matching several entries gets the minimum
 # of each plafond. A caller matching no entry gets default, or no plafond
@@ -140,11 +140,11 @@ session:
 
 # Optional SPNEGO/Kerberos login, on top of LDAP/OIDC: when set, GET
 # /auth/kibana stops rendering the form and becomes the Negotiate
-# challenge/response instead — the browser's own Kerberos ticket signs
+# challenge/response instead — the browser's own Kerberos authentication signs
 # it into Kibana with zero fields typed. Requires ldap: above (groups)
 # and session: below, same as OIDC/LDAP. keytab_file is a mounted binary
 # file, never a ${file:} secret reference. The proxy never contacts the
-# KDC itself: accepting a client's ticket only needs the keytab, so no
+# KDC itself: accepting a client's SPNEGO token only needs the keytab, so no
 # krb5.conf is required in its container.
 # kerberos:
 #   keytab_file: /etc/proxy/krb5.keytab

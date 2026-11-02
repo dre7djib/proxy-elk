@@ -18,9 +18,9 @@ Some of Elasticsearch's security features (LDAP and Active Directory, SSO, audit
 
 | Milestone | Content | Deliverable |
 | --- | --- | --- |
-| J1 | Authentication (OIDC, LDAP/AD), ACL, audit, secrets | A proxy usable on its own in front of Elasticsearch |
-| J2 | AI assistant, Kibana plugin, teams and spaces | The "Ask" page in Kibana |
-| J3 | MCP server, log analysis | MCP access and AI analysis of a specific log |
+| 1 | Authentication (OIDC, LDAP/AD), ACL, audit, secrets | A proxy usable on its own in front of Elasticsearch |
+| 2 | AI assistant, Kibana plugin, teams and spaces | The "Ask" page in Kibana |
+| 3 | MCP server, log analysis | MCP access and AI analysis of a specific log |
 
 Target versions: Elasticsearch and Kibana 8.19. A 9.x version will be added afterwards.
 

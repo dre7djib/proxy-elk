@@ -1,4 +1,4 @@
-# OpenLDAP bootstrap for the SP-01 spike.
+# OpenLDAP bootstrap for the spike.
 # Loaded by osixia/openldap (image --copy-service) from the folder mounted
 # at /container/service/slapd/assets/config/bootstrap/ldif/custom.
 # The dc=example,dc=org root and the admin (cn=admin,dc=example,dc=org) are
@@ -7,7 +7,7 @@
 # Passwords are in the clear: disposable test data, not a real
 # secret. If you change them here, also update spike/.env.example.
 #
-# The read account for search-then-bind (F4, SP-03) is NOT defined
+# The read account for search-then-bind is NOT defined
 # here: it is created by the image via LDAP_READONLY_USER=true (docker-compose),
 # which also adds a read ACL on the whole tree. An account created by
 # hand in this LDIF would, by default, only have the right to read its own
@@ -52,7 +52,7 @@ sn: Petit
 mail: carol@example.org
 userPassword: carolpass
 
-# Team groups (F70-F72): one group = one team + one level.
+# Team groups: one group = one team + one level.
 dn: cn=equipe-a-viewer,ou=groups,dc=example,dc=org
 objectClass: groupOfNames
 cn: equipe-a-viewer

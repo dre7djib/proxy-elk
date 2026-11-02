@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks the SP-06 success criterion (F78-F82): the real Kibana plugin
+# Checks the success criterion: the real Kibana plugin
 # obtains a short-lived token (JWT RS256) via Elasticsearch with alice's
 # session, and the dummy engine verifies its signature, expiry, and
 # audience.
@@ -70,7 +70,7 @@ fi
 echo "OK"
 echo
 
-echo "== Alice: token issued by the proxy (token-via-Elasticsearch variant, F78) =="
+echo "== Alice: token issued by the proxy (token-via-Elasticsearch variant) =="
 alice_token_body=$(curl -sf -u "alice:${ALICE_PASSWORD}" -X POST http://127.0.0.1:9210/_spike/identity-token)
 alice_token=$(echo "$alice_token_body" | sed -E 's/.*"token":"([^"]+)".*/\1/')
 if [ -z "$alice_token" ] || [ "$alice_token" = "$alice_token_body" ]; then
@@ -81,7 +81,7 @@ fi
 echo "OK: token received (truncated): ${alice_token:0:32}..."
 echo
 
-echo "== Relay to the dummy engine: signature, expiry, audience (F79) =="
+echo "== Relay to the dummy engine: signature, expiry, audience =="
 engine_body=$("${COMPOSE[@]}" exec -T proxy curl -s -X POST \
   -H "Authorization: Bearer ${alice_token}" http://engine:8080/whoami)
 if ! echo "$engine_body" | grep -q '"sub":"alice"'; then
@@ -139,7 +139,7 @@ echo "OK: the spike_ask plugin (asCurrentUser → proxy → engine) returns alic
 echo "    $plugin_body"
 echo
 
-echo "== Negative vectors: forged tokens, the engine must refuse them (F79) =="
+echo "== Negative vectors: forged tokens, the engine must refuse them =="
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
@@ -195,6 +195,6 @@ fi
 echo "OK: accepted (200) — confirms the refusals above come from the token, not some other problem"
 echo
 
-echo "== SP-06: success criterion met =="
+echo "==: success criterion met =="
 echo "    Real Kibana plugin loaded and working, token-via-Elasticsearch variant"
 echo "    verified end to end (signature, expiry, audience)."

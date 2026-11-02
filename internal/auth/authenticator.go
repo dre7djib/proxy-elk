@@ -3,7 +3,7 @@ package auth
 import "context"
 
 // Method identifies how an Identity was authenticated. It rides along in
-// the session for future audit use (J1-10); the ACL only ever looks at
+// the session for future audit use; the ACL only ever looks at
 // Identity itself.
 type Method string
 

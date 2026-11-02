@@ -11,7 +11,7 @@ import (
 	"proxy/internal/auth"
 )
 
-// aclCase is one row of configs/acl_cases.yaml (F24): a Decide call
+// aclCase is one row of configs/acl_cases.yaml: a Decide call
 // against the rules in configs/proxy.example.yaml, and the expected
 // outcome.
 type aclCase struct {
@@ -29,7 +29,7 @@ type aclCasesFile struct {
 }
 
 // TestACLCases replays every case in configs/acl_cases.yaml against the
-// ACL rules actually shipped in configs/proxy.example.yaml (F24): a case
+// ACL rules actually shipped in configs/proxy.example.yaml: a case
 // fails the moment the example config's rules and the recorded cases
 // drift apart.
 func TestACLCases(t *testing.T) {

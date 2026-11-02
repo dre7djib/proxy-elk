@@ -18,7 +18,7 @@ type meResponse struct {
 }
 
 // HandleMe returns a handler reporting the caller's identity, from either
-// the session cookie (human logins) or a Bearer JWT (M2M, F13). A missing,
+// the session cookie (human logins) or a Bearer JWT (M2M). A missing,
 // tampered or expired session (or sessions being nil, i.e. disabled), with
 // no valid Bearer either, gets a bare 401.
 func HandleMe(sessions *auth.Sessions, jwt *auth.JWT) http.HandlerFunc {

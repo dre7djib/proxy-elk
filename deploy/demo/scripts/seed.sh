@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Seed données de démo J1-13, lancé après kibana-bootstrap (service
-# one-shot `seed`). Adapté de spike/scripts/esql-seed.sh : équipe-a-sample
-# et équipe-b-sample existent déjà (un doc chacun, créés par
-# spike/scripts/kibana-bootstrap.sh) ; ce script ajoute quelques logs
-# supplémentaires pour un Discover non trivial (pas de focus ES|QL ici,
-# contrairement à SP-05).
+# Demo data seed, run after kibana-bootstrap (one-shot
+# `seed` service). Adapted from spike/scripts/esql-seed.sh: equipe-a-sample
+# and equipe-b-sample already exist (one document each, created by
+# spike/scripts/kibana-bootstrap.sh); this script adds a few extra
+# logs so Discover is not empty (no ES|QL focus here).
 set -euo pipefail
 
 ES_URL="http://elasticsearch:9200"
@@ -16,13 +15,13 @@ put_doc() {
     "${ES_URL}/${index}/_doc/${id}?refresh=true" -d "${body}" >/dev/null
 }
 
-echo "Seed equipe-a-sample (logs supplémentaires)..."
+echo "Seed equipe-a-sample (extra logs)..."
 put_doc equipe-a-sample log-1 '{"team":"equipe-a","message":"request received","host":"web-a1"}'
 put_doc equipe-a-sample log-2 '{"team":"equipe-a","message":"error 500","host":"web-a2"}'
 echo "OK"
 
-echo "Seed equipe-b-sample (logs supplémentaires)..."
+echo "Seed equipe-b-sample (extra logs)..."
 put_doc equipe-b-sample log-1 '{"team":"equipe-b","message":"request received","host":"web-b1"}'
 echo "OK"
 
-echo "Seed démo J1-13 terminé."
+echo "Demo seed complete."

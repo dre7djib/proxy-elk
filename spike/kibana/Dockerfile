@@ -1,12 +1,12 @@
-# Kibana 8.19.23 image + spike_ask plugin (SP-06), built in two stages
+# Kibana 8.19.23 image + spike_ask plugin, built in two stages
 # as Elastic documents for 8.19 (external-plugin-development.html,
 # plugin-tooling.html, k8s-kibana-plugins.html): the Kibana distributable
 # no longer ships @kbn/optimizer, a plugin must be precompiled with the
 # Kibana monorepo tooling before being installed with bin/kibana-plugin.
 #
-# RUNTIME FINDING (SP-06): this Dockerfile does build end to end
+# RUNTIME FINDING: this Dockerfile does build end to end
 # in this spike's environment (Docker engine at ~4 GB RAM, see
-# `docker info --format '{{.MemTotal}}'`) — this ticket's initial finding
+# `docker info --format '{{.MemTotal}}'`) — the initial finding
 # ("bootstrap too heavy, build impossible here") was wrong: the real
 # blockers were three specific bugs, fixed below, not a resource
 # limit:
@@ -44,7 +44,7 @@ RUN corepack enable \
 
 COPY kibana-plugin/spike_ask /build/kibana/plugins/spike_ask
 
-# Runtime finding (SP-06): `pnpm kbn bootstrap --allow-root` is enough for
+# Runtime finding: `pnpm kbn bootstrap --allow-root` is enough for
 # the bootstrap itself, but the plugin's internal webpack build task
 # (`buildWebpackPackages`, invoked by `plugin_helpers build`) re-checks
 # "Kibana should not be run as root" on its own without exposing a clean

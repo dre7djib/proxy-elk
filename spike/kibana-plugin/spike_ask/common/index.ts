@@ -1,4 +1,4 @@
-// Runtime finding (SP-06): @kbn/optimizer (entry_point_creator) requires a
+// Runtime finding: @kbn/optimizer (entry_point_creator) requires a
 // `<plugin>/common` module for any plugin with `ui: true`, even if empty —
 // without it, the optimizer fails silently when compiling the public
 // bundle ("Module not found: Can't resolve '.../plugins/spike_ask/common'"),

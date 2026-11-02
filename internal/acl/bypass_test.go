@@ -7,7 +7,7 @@ import (
 	"proxy/internal/auth"
 )
 
-// TestBypassBattery is the J1-14 battery: every case here must be refused.
+// TestBypassBattery is the battery: every case here must be refused.
 // Rule in force: group "team-a", indices "logs-*" or "public", action
 // "read". The resolver is the fakeResolver from resolve_test.go.
 func TestBypassBattery(t *testing.T) {

@@ -1,4 +1,4 @@
-// Package limits resolves and enforces per-role request quotas (F25): max
+// Package limits resolves and enforces per-role request quotas: max
 // duration, max response size, requests per minute.
 package limits
 

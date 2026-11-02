@@ -21,7 +21,7 @@ type lockoutState struct {
 }
 
 // Limiter blocks login attempts for a (username, IP) pair after too many
-// failures within a sliding window (F8). A nil *Limiter always allows and
+// failures within a sliding window. A nil *Limiter always allows and
 // never panics, so it is safe to leave unset.
 //
 // shortcut: entries are never pruned except by Success or a new window

@@ -24,7 +24,7 @@ const SpikeAskApp: React.FC<{ http: CoreSetup['http'] }> = ({ http }) => {
 
   return (
     <div style={{ padding: 16 }}>
-      <h1>Spike Ask (SP-06)</h1>
+      <h1>Spike Ask</h1>
       <p>
         Calls the dummy engine via the short-lived token issued by the proxy (variant: token requested
         through Elasticsearch, with the current user&apos;s session).

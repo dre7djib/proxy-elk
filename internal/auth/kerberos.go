@@ -28,7 +28,7 @@ type KerberosConfig struct {
 	Realm            string
 }
 
-// Kerberos validates a SPNEGO "Negotiate" ticket against an in-memory
+// Kerberos validates a SPNEGO "Negotiate" token against an in-memory
 // keytab — accepting an AP-REQ never talks to the KDC, so the proxy
 // container needs no krb5.conf — then resolves the client principal's
 // groups via Lookup, since Kerberos carries no password for Authenticate's
@@ -37,7 +37,7 @@ type Kerberos struct {
 	cfg KerberosConfig
 	kt  *keytab.Keytab
 
-	// Lookup resolves the ticket's username (left of '@') to an Identity,
+	// Lookup resolves the username (left of '@') to an Identity,
 	// normally *LDAP.Lookup.
 	Lookup func(ctx context.Context, username string) (*Identity, error)
 
@@ -49,7 +49,7 @@ type Kerberos struct {
 }
 
 // NewKerberos loads cfg.KeytabFile and returns a Kerberos ready to
-// validate tickets for cfg.ServicePrincipal/cfg.Realm.
+// validate SPNEGO tokens for cfg.ServicePrincipal/cfg.Realm.
 func NewKerberos(cfg KerberosConfig, lookup func(ctx context.Context, username string) (*Identity, error)) (*Kerberos, error) {
 	kt, err := keytab.Load(cfg.KeytabFile)
 	if err != nil {
@@ -62,7 +62,7 @@ func NewKerberos(cfg KerberosConfig, lookup func(ctx context.Context, username s
 
 // NewKerberosForTest returns a Kerberos with no keytab loaded, for tests
 // (here and in internal/es) that drive Accept and Lookup directly
-// instead of a real ticket/KDC.
+// instead of a real SPNEGO token or a KDC.
 func NewKerberosForTest(realm string) *Kerberos {
 	return &Kerberos{cfg: KerberosConfig{Realm: realm}}
 }
@@ -78,14 +78,14 @@ func (k *Kerberos) acceptToken(token string) (username, realm string, err error)
 	}
 	// DecodePAC(false): PAC is an Active Directory extension this demo's
 	// MIT KDC still attaches authorization-data for; gokrb5 can't parse
-	// it as a Windows PAC and rejects the whole ticket otherwise
+	// it as a Windows PAC and rejects the authentication otherwise
 	// ("PAC Info Buffers does not contain a KerbValidationInfo",
 	// confirmed against a real KDC). Lookup resolves groups via LDAP
 	// regardless, so nothing here ever needed PAC data.
 	svc := spnego.SPNEGOService(k.kt, service.DecodePAC(false))
 	ok, ctx, status := svc.AcceptSecContext(&st)
 	if !ok || status.Code != gssapi.StatusComplete {
-		return "", "", fmt.Errorf("kerberos: ticket rejected: %v", status)
+		return "", "", fmt.Errorf("kerberos: authentication rejected: %v", status)
 	}
 	creds, ok := ctx.Value(ctxKeyCredentials).(*credentials.Credentials)
 	if !ok {
@@ -96,7 +96,7 @@ func (k *Kerberos) acceptToken(token string) (username, realm string, err error)
 
 // Authenticate validates r's Negotiate token and resolves the caller's
 // groups via Lookup. It never contacts the KDC. A missing header, a
-// rejected ticket, a realm other than cfg.Realm, or a username absent
+// rejected authentication, a realm other than cfg.Realm, or a username absent
 // from Lookup's directory are all reported identically — the caller
 // never learns which.
 func (k *Kerberos) Authenticate(r *http.Request) (*Identity, error) {
@@ -119,7 +119,7 @@ func (k *Kerberos) Authenticate(r *http.Request) (*Identity, error) {
 }
 
 // Middleware serves 401 + "WWW-Authenticate: Negotiate" for a request
-// with no valid ticket, and otherwise calls inner with the resolved
+// with no valid SPNEGO token, and otherwise calls inner with the resolved
 // Identity attached to the request context (see KerberosIdentity).
 func (k *Kerberos) Middleware(inner http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

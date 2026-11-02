@@ -8,16 +8,16 @@ import (
 
 // Decide checks whether id may perform action on every one of indices
 // (already resolved to concrete index names — see IndexResolver), under
-// ctx (F21 conditions). It is fail-closed: any index not covered by a
+// ctx (conditions). It is fail-closed: any index not covered by a
 // matching allow rule denies the whole request, and the error names the
-// first index that was refused (F16).
+// first index that was refused.
 func (p *Policy) Decide(id auth.Identity, ctx DecideContext, indices []string, action Action) error {
 	_, err := p.decide(id, ctx, indices, action)
 	return err
 }
 
 // DecideRule is Decide, but also returns the name of the rule that
-// granted the request — empty on deny. Used by the -simulate CLI (F22),
+// granted the request — empty on deny. Used by the -simulate CLI,
 // which reports which rule matched.
 func (p *Policy) DecideRule(id auth.Identity, ctx DecideContext, indices []string, action Action) (string, error) {
 	return p.decide(id, ctx, indices, action)

@@ -1,7 +1,7 @@
-# proxy-elk demo (J1-13/J1-12/J1-15, F68/F66/F69/F2)
+# proxy-elk demo
 
-Full demo in **one command**, derived from [`spike/`](../../spike) (SP-01
-through SP-06) — `spike/` is left unchanged; this directory does not modify it.
+Full demo in **one command**, derived from [`spike/`](../../spike) (
+through) — `spike/` is left unchanged; this directory does not modify it.
 
 ```sh
 cd deploy/demo
@@ -16,10 +16,10 @@ LDAP and session data live in named volumes).
 
 ## One proxy
 
-The **product** binary (repo root, `Dockerfile` image, J1-11) is the
+The **product** binary (repo root, `Dockerfile` image) is the
 **only** Kibana → Elasticsearch path in this demo. It exposes `/health`,
 `/metrics`, `/auth/ldap` (LDAPS), `/auth/login` + `/auth/callback` (OIDC
-Keycloak), `/auth/me`, and — since J1-15 (F2) — relays Elasticsearch calls:
+Keycloak), `/auth/me`, and — since — relays Elasticsearch calls:
 LDAP/session/JWT identity resolved, ACL decided (`internal/acl`), then
 forwarded upstream as the `proxy_service` service account with
 `es-security-runas-user` impersonating the caller. The caller's own
@@ -33,25 +33,25 @@ spike's old `gateway` (Track A) has been retired from this demo.
 | Service         | Role                                                                  |
 |-----------------|-----------------------------------------------------------------------|
 | `certs`         | Generates the demo LDAPS CA + server cert (one-shot, idempotent)      |
-| `elasticsearch` | Single-node cluster, native security enabled, `es` network only (no host port, F66) |
-| `setup`         | ES bootstrap: `kibana_system`, `proxy_runas`, users alice/bob/carol, resolver API key (F15) |
-| `engine`        | Verifies the signed token (SP-06), separate process from the proxy    |
+| `elasticsearch` | Single-node cluster, native security enabled, `es` network only (no host port) |
+| `setup`         | ES bootstrap: `kibana_system`, `proxy_runas`, users alice/bob/carol, resolver API key |
+| `engine`        | Verifies the signed token, separate process from the proxy    |
 | `openldap`      | Test directory (alice/bob/carol), plaintext LDAP 389 + LDAPS 636      |
 | `keycloak`      | Demo OIDC IdP, realm `demo` imported (client `proxy`, same users)     |
 | `kibana`        | Kibana 8.19 + spike_ask plugin (build `spike/kibana`)                 |
 | `kibana-setup`  | Per-team Kibana spaces/roles (reuses `spike/scripts/kibana-bootstrap.sh`) |
 | `seed`          | Extra demo logs into `equipe-a/b-sample`                              |
-| `proxy`         | Product image: `/health`, `/metrics`, `/auth/*`, ES relay (J1-15)     |
+| `proxy`         | Product image: `/health`, `/metrics`, `/auth/*`, ES relay     |
 | `kdc`           | MIT KDC, realm `EXAMPLE.ORG`, generates the proxy's keytab on first boot |
 | `krb5-user`     | `kinit` + `curl --negotiate` client for the SPNEGO smoke test          |
 
-## LDAP TLS (F5)
+## LDAP TLS
 
 `gen-certs.sh` generates a throwaway CA and server certificate under
 `certs/` (never committed; see `certs/.gitignore`) before `openldap`
 starts. The **product** proxy connects with `ldaps://openldap:636` using
 that CA (`configs/proxy.yaml`, `ldap.ca_file`) — one LDAPS connection for
-both `/auth/ldap` and the ES relay's run_as checks (J1-15). Plaintext port
+both `/auth/ldap` and the ES relay's run_as checks. Plaintext port
 389 stays exposed for a direct LDAP client, but the product doesn't use it.
 
 ## OIDC (Keycloak)
@@ -86,16 +86,16 @@ Then open `http://127.0.0.1:8081/auth/login`.
 
 With `kerberos:` set in `configs/proxy.yaml`, `GET /auth/kibana` stops
 rendering the login form: it becomes the SPNEGO/Negotiate
-challenge/response, so a browser with a valid Kerberos ticket reaches
+challenge/response, so a browser that already authenticated with Kerberos reaches
 Kibana with zero fields typed. The demo's `kdc` service provisions a
 realm `EXAMPLE.ORG` with a principal `alice` (same password as the LDAP
 LDIF, `ALICE_PASSWORD`) and the proxy's keytab, generated at first boot
 and mounted read-only into `proxy` — the proxy container itself needs no
-`krb5.conf`, since accepting a client's ticket via keytab never contacts
+`krb5.conf`, since accepting a client's SPNEGO token via keytab never contacts
 the KDC.
 
-To try it from a browser (not just `verify.sh`'s smoke test), the ticket
-must be for the hostname in the URL, so add it to `/etc/hosts` and
+To try it from a browser (not just `verify.sh`'s smoke test), the principal
+must match the hostname in the URL, so add it to `/etc/hosts` and
 `kinit` against the KDC (published on `127.0.0.1:88`):
 
 ```sh
@@ -112,17 +112,17 @@ Then enable SPNEGO in the browser for `http://proxy.demo.local:8081`:
   `--auth-server-whitelist="proxy.demo.local" --auth-negotiate-delegate-allowlist="proxy.demo.local"`.
 
 Opening `http://proxy.demo.local:8081/auth/kibana` then shows no form at
-all: either a 401 (no ticket yet) or a redirect straight into Kibana.
+all: either a 401 (no SPNEGO token yet) or a redirect straight into Kibana.
 
 `verify.sh` runs the same flow from the `krb5-user` container instead
 (same Docker network, resolves the proxy as `proxy` — hence the second
 SPN in the keytab, `HTTP/proxy`): `kinit alice`, then
 `curl --negotiate -u :` against `/auth/kibana` and the ES relay.
 
-## Networks (F66, F69 — J1-12)
+## Networks (—)
 
 Two Docker networks, the demo's equivalent of a NetworkPolicy (no Helm/K8s
-deployment exists yet, F54):
+deployment exists yet,):
 
 - **`es`** (`internal: true`, no gateway to the outside): `elasticsearch`,
   `proxy`, and the one-shots `setup`, `seed`, `kibana-setup`. They talk to
@@ -140,8 +140,8 @@ Control check: `curl http://127.0.0.1:9200` must refuse the connection;
 
 ## Verification
 
-`scripts/verify.sh` covers the F68 criterion, the F66/F69 isolation
-check, and the J1-15 ES relay:
+`scripts/verify.sh` covers the criterion, the isolation
+check, and the ES relay:
 
 0. `127.0.0.1:9200` refuses the connection (Elasticsearch unreachable
    outside `es`)
@@ -150,13 +150,13 @@ check, and the J1-15 ES relay:
 3. OIDC smoke: `/auth/login` redirects to Keycloak (302)
 4. Kibana login alice, via the product proxy (its only path to
    Elasticsearch)
-5. ES relay (run_as, F2): alice reads `equipe-a-sample` through the proxy;
+5. ES relay (run_as): alice reads `equipe-a-sample` through the proxy;
    `equipe-b-sample` is denied (403) by the ACL
 6. Kerberos SPNEGO: `401` + `WWW-Authenticate: Negotiate` without a
-   ticket, then alice's real ticket (`krb5-user`) through `/auth/kibana`
+   SPNEGO token, then alice's real SPNEGO token (`krb5-user`) through `/auth/kibana`
    and the ES relay
 
-`scripts/accept.sh` is the J1 acceptance scenario (TR-03). It uses the
+`scripts/accept.sh` is the phase 1 acceptance scenario. It uses the
 session cookie, which is what the audit records (`verify.sh` step 5 uses
 Basic auth, and that identity does not appear in the audit):
 
@@ -170,7 +170,7 @@ Basic auth, and that identity does not appear in the audit):
 5. The proxy logs contain the four JSON lines: alice, `oidc` then `ldap`,
    `allowed` then `denied`
 
-Ask and Discover are not in this script. They are the J2 acceptance
+Ask and Discover are not in this script. They are the phase 2 acceptance
 criterion.
 
 ## Ports (`127.0.0.1` only, same as the spike)
@@ -188,11 +188,11 @@ Elasticsearch has no host port: it's reachable only from the `es` network
 
 ## Out of scope (see plan)
 
-- Helm (F54).
-- Replacing the spike Kibana plugin with the final J2 plugin.
+- Helm.
+- Replacing the spike Kibana plugin with the final phase 2 plugin.
 - ACL for `kibana_system` restricted to `.kibana*` and required system
-  indices (F67): `kibana_system` is a passthrough account in
+  indices: `kibana_system` is a passthrough account in
   `elasticsearch.passthrough_users` — it relays unchanged, never through
   the ACL.
-- Short-lived identity token (F78, J2-03), ES|QL parsing, removing the
+- Short-lived identity token, ES|QL parsing, removing the
   spike.

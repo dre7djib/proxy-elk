@@ -1,4 +1,4 @@
-# ACL replay cases (F24): each case is a Decide call against the rules in
+# ACL replay cases: each case is a Decide call against the rules in
 # proxy.example.yaml. "go test" in internal/config replays every case and
 # checks the outcome — allow (and which rule granted it) or deny. Add a
 # case here whenever proxy.example.yaml's acl.rules changes; the test
@@ -46,7 +46,7 @@ cases:
     action: cluster_admin
     deny: true
 
-  - name: wildcard-free rule never covers a system index (F17)
+  - name: wildcard-free rule never covers a system index
     groups: [equipe-a-viewer]
     index: .kibana_1
     action: read

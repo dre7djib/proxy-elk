@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// isSystemIndex reports whether index is a system index (F17): names
+// isSystemIndex reports whether index is a system index: names
 // starting with "." or matching a configured system pattern.
 func isSystemIndex(index string, systemIndices []string) bool {
 	if strings.HasPrefix(index, ".") {
@@ -21,7 +21,7 @@ func isSystemIndex(index string, systemIndices []string) bool {
 
 // patternIsSystem reports whether pattern is itself a "system" pattern:
 // starting with "." or equal to a configured system pattern. Only such a
-// pattern may grant access to a system index (F17) — a generic wildcard
+// pattern may grant access to a system index — a generic wildcard
 // like "*" or "logs-*" never does, however broad.
 func patternIsSystem(pattern string, systemIndices []string) bool {
 	if strings.HasPrefix(pattern, ".") {
@@ -36,7 +36,7 @@ func patternIsSystem(pattern string, systemIndices []string) bool {
 }
 
 // indexMatches reports whether pattern grants access to index, honoring
-// the F17 system-index gate: a match against a system index only counts if
+// the system-index gate: a match against a system index only counts if
 // pattern is itself a system pattern.
 func indexMatches(pattern, index string, systemIndices []string) bool {
 	matched, err := path.Match(pattern, index)

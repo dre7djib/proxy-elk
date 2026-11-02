@@ -22,7 +22,7 @@ import (
 type KibanaSSOLogin struct {
 	Directory LDAPDirectory
 	// Limiter blocks repeated failed logins for a (username, IP) pair
-	// (F8), same as LDAPLogin. Nil disables lockout.
+	//, same as LDAPLogin. Nil disables lockout.
 	Limiter *auth.Limiter
 
 	// KibanaURL is the address the proxy itself calls (container-internal,
@@ -95,7 +95,7 @@ func (k *KibanaSSOLogin) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if err := k.loginKibana(r, w, username, password); err != nil {
 		log.Printf("kibana sso: login %q: %v", username, err)
-		http.Error(w, "connexion à Kibana impossible", http.StatusBadGateway)
+		http.Error(w, "cannot connect to Kibana", http.StatusBadGateway)
 		return
 	}
 
@@ -104,13 +104,13 @@ func (k *KibanaSSOLogin) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 // HandleNegotiate serves GET /auth/kibana when Kerberos is active: the
 // SPNEGO/Negotiate challenge/response replaces the login form entirely,
-// with the login form only as fallback when no ticket is sent. A validated ticket logs the browser into
+// with the login form only as fallback when no SPNEGO token is sent. A validated token logs the browser into
 // Kibana with ShadowPassword — Kerberos never has the user's real
 // password — and redirects it there.
 func (k *KibanaSSOLogin) HandleNegotiate(w http.ResponseWriter, r *http.Request) {
 	id, err := k.Kerberos.Authenticate(r)
 	if err != nil {
-		// No valid ticket: challenge Negotiate (a configured browser retries
+		// No valid SPNEGO token: challenge Negotiate (a configured browser retries
 		// with one) and show the login form as fallback for the others.
 		w.Header().Set("WWW-Authenticate", "Negotiate")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -119,7 +119,7 @@ func (k *KibanaSSOLogin) HandleNegotiate(w http.ResponseWriter, r *http.Request)
 	}
 	if err := k.loginKibana(r, w, id.Subject, k.ShadowPassword); err != nil {
 		log.Printf("kibana sso: login %q: %v", id.Subject, err)
-		http.Error(w, "connexion à Kibana impossible", http.StatusBadGateway)
+		http.Error(w, "cannot connect to Kibana", http.StatusBadGateway)
 		return
 	}
 	k.finish(w, r, *id)
@@ -193,14 +193,14 @@ func (k *KibanaSSOLogin) renderForm(w http.ResponseWriter, errMsg string) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><title>Connexion</title></head>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head>
 <body style="font-family:sans-serif;max-width:20rem;margin:4rem auto">
-<h1>Connexion</h1>
+<h1>Sign in</h1>
 %s
 <form method="post">
-<p><input name="username" placeholder="utilisateur" autofocus style="width:100%%"></p>
-<p><input name="password" type="password" placeholder="mot de passe" style="width:100%%"></p>
-<button type="submit">Se connecter</button>
+<p><input name="username" placeholder="username" autofocus style="width:100%%"></p>
+<p><input name="password" type="password" placeholder="password" style="width:100%%"></p>
+<button type="submit">Sign in</button>
 </form>
 </body></html>`, errHTML)
 }

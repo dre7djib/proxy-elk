@@ -19,7 +19,7 @@ func TestKerberosMiddlewareNoTokenChallenges401Negotiate(t *testing.T) {
 	k := testKerberos(t, "EXAMPLE.ORG", nil, nil)
 	rec := httptest.NewRecorder()
 	k.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("inner handler must not run without a ticket")
+		t.Fatal("inner handler must not run without SPNEGO authentication")
 	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/kibana", nil))
 
 	if rec.Code != http.StatusUnauthorized {
@@ -32,13 +32,13 @@ func TestKerberosMiddlewareNoTokenChallenges401Negotiate(t *testing.T) {
 
 func TestKerberosMiddlewareRejectedTokenIs401(t *testing.T) {
 	k := testKerberos(t, "EXAMPLE.ORG", func(token string) (string, string, error) {
-		return "", "", fmt.Errorf("kerberos: ticket rejected")
+		return "", "", fmt.Errorf("kerberos: authentication rejected")
 	}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/auth/kibana", nil)
 	req.Header.Set("Authorization", "Negotiate garbage")
 	rec := httptest.NewRecorder()
 	k.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("inner handler must not run with a rejected ticket")
+		t.Fatal("inner handler must not run with a rejected authentication")
 	})).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {

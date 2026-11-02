@@ -8,7 +8,7 @@ import (
 	"proxy/internal/limits"
 )
 
-// Guard enforces per-role limits (F25) around next: requests per minute,
+// Guard enforces per-role limits around next: requests per minute,
 // max duration, max response size. Identity comes from the session
 // cookie or a Bearer JWT, the same lookup HandleMe uses. A request with
 // no identity is not counted and passes straight through unguarded —

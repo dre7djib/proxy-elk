@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kibana bootstrap for SP-04 (ES roles and Kibana spaces per team).
+# Kibana bootstrap for (ES roles and Kibana spaces per team).
 # Run once in the docker-compose `kibana-setup` service, once
 # Kibana responds (depends_on condition: service_healthy): at that point,
 # Elasticsearch already has the stub roles and native users created by
@@ -8,8 +8,8 @@
 # Kibana exists.
 #
 # This script, in order:
-#   1. creates the Kibana spaces "equipe-a" and "equipe-b" (one per team,
-#      F70/F75) via Kibana's spaces API (POST/PUT /api/spaces/space);
+#   1. creates the Kibana spaces "equipe-a" and "equipe-b" (one per team)
+#      via Kibana's spaces API (POST/PUT /api/spaces/space);
 #   2. completes the stub roles equipe_a_viewer / equipe_a_editor /
 #      equipe_b_viewer via Kibana's roles API (PUT /api/security/role),
 #      NOT Elasticsearch's roles API: the Kibana 8.19 docs are explicit,
@@ -20,15 +20,15 @@
 #   3. indexes a test document into equipe-a-sample and equipe-b-sample,
 #      directly on Elasticsearch (like es-bootstrap.sh for
 #      users): used to verify *data* isolation, not
-#      only spaces (ticket success criterion);
+#      only spaces (success criterion);
 #   4. creates a minimal dashboard in the "equipe-a" space, for the
 #      "bob can edit a dashboard of A" criterion.
 #
 # Idempotent: spaces and roles are rewritten by PUT (the full definition
 # replaces the previous one); the dashboard is created with a fixed id and
 # overwrite=true; indexing the test document also uses a fixed id.
-# No YAML, no admin level, no generic sync: that comes in
-# J2-01/J2-02. Disposable spike code, no tests.
+# No YAML, no admin level, no generic sync: that comes later.
+# Disposable spike code, no tests.
 set -euo pipefail
 
 ES_URL="http://elasticsearch:9200"
@@ -69,10 +69,10 @@ JSON
   fi
 }
 
-# One space per team (F70, F75). Names distinct from the "default" space created by
+# One space per team. Names distinct from the "default" space created by
 # Kibana itself, which no equipe_* role references.
-create_or_update_space equipe-a "Team A" "Team A space (SP-04)"
-create_or_update_space equipe-b "Team B" "Team B space (SP-04)"
+create_or_update_space equipe-a "Team A" "Team A space"
+create_or_update_space equipe-b "Team B" "Team B space"
 
 put_kibana_role() {
   local role_name="$1" index_pattern="$2" kibana_base="$3" space_id="$4"
@@ -100,7 +100,7 @@ put_kibana_role() {
   echo "OK"
 }
 
-# Full roles per team and level (F74, F75). Kibana's roles API
+# Full roles per team and level. Kibana's roles API
 # fully rewrites the "elasticsearch" and "kibana" sections of the stub role
 # created by es-bootstrap.sh: none of the three roles mentions the
 # "default" space, so there is no access outside the team's space.
@@ -116,13 +116,13 @@ index_sample_doc() {
   echo "Test document in ${index_name}..."
   curl -sf -X PUT "${ES_AUTH[@]}" -H "Content-Type: application/json" \
     "${ES_URL}/${index_name}/_doc/sample-1?refresh=true" \
-    -d "{\"team\":\"${team_label}\",\"message\":\"SP-04 test data\"}" >/dev/null
+    -d "{\"team\":\"${team_label}\",\"message\":\"test data\"}" >/dev/null
   echo "OK"
 }
 
 # Test data per team (outside the Kibana space itself): used to verify
-# that isolation also applies to data via the proxy (ticket success
-# criterion and SP-02/F67 finding, not only to Kibana objects
+# that isolation also applies to data via the proxy (success
+# criterion, not only to Kibana objects
 # in the space).
 index_sample_doc equipe-a-sample equipe-a
 index_sample_doc equipe-b-sample equipe-b
@@ -132,7 +132,7 @@ curl -sf -X POST "${KBN_AUTH[@]}" "${KBN_HEADERS[@]}" \
   "${KIBANA_URL}/s/equipe-a/api/saved_objects/dashboard/spike-dashboard-equipe-a?overwrite=true" \
   -d '{
     "attributes": {
-      "title": "Team A dashboard (SP-04)",
+      "title": "Team A dashboard",
       "panelsJSON": "[]",
       "optionsJSON": "{\"useMargins\":true,\"syncColors\":false,\"hidePanelTitles\":false}",
       "version": 1,
@@ -157,4 +157,4 @@ for team in equipe-a equipe-b; do
   echo "OK"
 done
 
-echo "Kibana bootstrap complete (SP-04): equipe-a/equipe-b spaces, equipe_a_viewer/equipe_a_editor/equipe_b_viewer roles, test data and dashboard."
+echo "Kibana bootstrap complete: equipe-a/equipe-b spaces, equipe_a_viewer/equipe_a_editor/equipe_b_viewer roles, test data and dashboard."

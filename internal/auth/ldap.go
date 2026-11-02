@@ -174,7 +174,7 @@ func (l *LDAP) storeGroups(key string, groups []string) {
 
 // groupFilter builds the group-membership search filter for userDN: AD
 // nested resolution when NestedGroups is set, otherwise a flat
-// groupOfNames/member search (J1-03 behavior, unchanged for OpenLDAP).
+// groupOfNames/member search (unchanged for OpenLDAP).
 func (l *LDAP) groupFilter(userDN string) string {
 	escaped := ldap.EscapeFilter(userDN)
 	if l.cfg.NestedGroups {
@@ -186,7 +186,7 @@ func (l *LDAP) groupFilter(userDN string) string {
 // findUser searches for username and returns its DN and mail attribute.
 // conn must already be bound as an account with read access to BaseDN.
 func (l *LDAP) findUser(conn ldapConn, username string) (userDN, email string, err error) {
-	// EscapeFilter neutralizes LDAP filter metacharacters in username (F7):
+	// EscapeFilter neutralizes LDAP filter metacharacters in username:
 	// an attacker cannot inject "*)(uid=*" to widen the search.
 	filter := fmt.Sprintf(l.cfg.UserFilter, ldap.EscapeFilter(username))
 	searchReq := ldap.NewSearchRequest(
@@ -240,8 +240,8 @@ func (l *LDAP) searchGroups(conn ldapConn, userDN, cacheKey string) ([]string, e
 }
 
 // Lookup resolves username to an Identity (email, flat group CNs) via the
-// read-only account, with no password check. Used by Kerberos (F2's
-// counterpart for SPNEGO), which authenticates the ticket itself and has
+// read-only account, with no password check. Used by Kerberos
+// (the SPNEGO path), which authenticates the caller itself and has
 // no password to bind with. A username absent from the directory fails:
 // no groups, so no ACL match.
 func (l *LDAP) Lookup(ctx context.Context, username string) (*Identity, error) {
@@ -267,7 +267,7 @@ func (l *LDAP) Lookup(ctx context.Context, username string) (*Identity, error) {
 
 // Authenticate runs search-then-bind for username/password and returns the
 // user's Identity (subject, email, flat group CNs). An empty password is
-// refused before any network connection (F7). The password only exists for
+// refused before any network connection. The password only exists for
 // the duration of this call; it is never logged, cached or stored.
 func (l *LDAP) Authenticate(ctx context.Context, username, password string) (*Identity, error) {
 	if password == "" {

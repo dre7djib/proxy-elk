@@ -13,7 +13,7 @@ import (
 )
 
 // SessionCookieName is the cookie carrying the signed session. Fixed: OIDC
-// and LDAP logins share one session mechanism (F12).
+// and LDAP logins share one session mechanism.
 const SessionCookieName = "proxy_session"
 
 // SessionConfig configures a Sessions issuer/parser.

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Critère d'acceptation J1 (TR-03), une fois en OIDC et une fois en LDAP :
-#   1. login -> /auth/me (sujet, méthode, groupes)
-#   2. alice lit equipe-a-sample
-#   3. alice se voit refuser equipe-b-sample, message explicite
-#   4. les deux lignes sont dans l'audit JSON du proxy
-#   5. LDAP : carol (equipe-b-viewer) lit equipe-b-sample et pas equipe-a-sample
+# Phase 1 acceptance check, once over OIDC and once over LDAP:
+#   1. login -> /auth/me (subject, method, groups)
+#   2. alice reads equipe-a-sample
+#   3. alice is denied equipe-b-sample, with an explicit message
+#   4. both lines are in the proxy's JSON audit
+#   5. LDAP: carol (equipe-b-viewer) reads equipe-b-sample and not equipe-a-sample
 #
-# Ask et Discover ne sont pas dans ce script : ils dépendent de J2.
-# Les lectures passent par le cookie de session. Le Basic auth de
-# verify.sh n'apparaît pas dans l'audit (identité lue sur le cookie).
+# Ask and Discover are not in this script: they depend on phase 2.
+# Reads go through the session cookie. verify.sh's Basic auth
+# does not show up in the audit (identity is read from the cookie).
 #
-# Usage : depuis deploy/demo/, après `docker compose up -d` :
+# Usage: from deploy/demo/, after `docker compose up -d`:
 #   ./scripts/accept.sh
 set -euo pipefail
 
@@ -25,8 +25,8 @@ set -a
 source .env
 set +a
 
-# Horodatage avant les requêtes : docker compose logs --since ne doit
-# pas mélanger un passage précédent.
+# Timestamp before the requests: docker compose logs --since must not
+# mix in a previous run.
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 wait_for() {
@@ -60,9 +60,9 @@ ldap_carol_jar=$(mktemp)
 body=$(mktemp)
 trap 'rm -f "$oidc_jar" "$ldap_alice_jar" "$ldap_carol_jar" "$body"' EXIT
 
-# Code flow. Le client Keycloak n'a pas le grant mot de passe.
-# --resolve évite une entrée /etc/hosts : l'issuer de la démo est
-# http://keycloak:18080, le callback reste http://127.0.0.1:8081.
+# Authorization code flow. The Keycloak client has no password grant.
+# --resolve avoids an /etc/hosts entry: the demo issuer is
+# http://keycloak:18080, the callback stays http://127.0.0.1:8081.
 oidc_session() {
   local user="$1"
   local password="$2"
@@ -72,7 +72,7 @@ oidc_session() {
   headers=$(curl -sS -D - -o /dev/null -c "$jar" "http://127.0.0.1:8081/auth/login")
   location=$(printf '%s\n' "$headers" | header_value Location)
   if [ -z "$location" ]; then
-    echo "KO: /auth/login sans redirection vers Keycloak" >&2
+    echo "KO: /auth/login did not redirect to Keycloak" >&2
     exit 1
   fi
 
@@ -80,14 +80,14 @@ oidc_session() {
   action=$(printf '%s' "$page" | sed -n 's/.*action="\([^"]*\)".*/\1/p' | head -n 1)
   action=${action//&amp;/&}
   if [ -z "$action" ]; then
-    echo "KO: formulaire Keycloak introuvable" >&2
+    echo "KO: Keycloak form not found" >&2
     exit 1
   fi
   case "$action" in
     http://* | https://*) ;;
     /*) action="http://keycloak:18080${action}" ;;
     *)
-      echo "KO: action du formulaire inattendue : $action" >&2
+      echo "KO: unexpected form action: $action" >&2
       exit 1
       ;;
   esac
@@ -101,18 +101,18 @@ oidc_session() {
   code=$(printf '%s\n' "$headers" | awk 'BEGIN { code = "" } /^HTTP\// { code = $2 } END { print code }')
   location=$(printf '%s\n' "$headers" | header_value Location)
   if [ "$code" != "302" ] && [ "$code" != "303" ]; then
-    echo "KO: login Keycloak de ${user} a renvoyé ${code} (attendu redirect)" >&2
+    echo "KO: Keycloak login for ${user} returned ${code} (expected a redirect)" >&2
     exit 1
   fi
   case "$location" in
     http://127.0.0.1:8081/auth/callback*) ;;
     *)
-      echo "KO: Keycloak n'a pas renvoyé vers /auth/callback : ${location}" >&2
+      echo "KO: Keycloak did not redirect to /auth/callback: ${location}" >&2
       exit 1
       ;;
   esac
 
-  # Le callback pose le cookie de session et redirige vers /auth/me.
+  # The callback sets the session cookie and redirects to /auth/me.
   curl -sS -o "$body" -c "$jar" -b "$jar" -L --max-redirs 3 "$location" >/dev/null
 }
 
@@ -124,15 +124,15 @@ expect_me() {
   local me
   me=$(curl -sS -b "$jar" http://127.0.0.1:8081/auth/me)
   if ! printf '%s' "$me" | grep -q "\"subject\":\"${user}\""; then
-    echo "KO: /auth/me ne renvoie pas ${user} : ${me}" >&2
+    echo "KO: /auth/me does not return ${user}: ${me}" >&2
     exit 1
   fi
   if ! printf '%s' "$me" | grep -q "\"method\":\"${method}\""; then
-    echo "KO: /auth/me méthode ${method} absente : ${me}" >&2
+    echo "KO: /auth/me is missing method ${method}: ${me}" >&2
     exit 1
   fi
   if ! printf '%s' "$me" | grep -q "${group}"; then
-    echo "KO: /auth/me sans le groupe ${group} : ${me}" >&2
+    echo "KO: /auth/me is missing group ${group}: ${me}" >&2
     exit 1
   fi
 }
@@ -144,64 +144,64 @@ expect_index() {
   local code
   code=$(curl -sS -o "$body" -w '%{http_code}' -b "$jar" "http://127.0.0.1:8081/${index}/_count")
   if [ "$code" != "$want" ]; then
-    echo "KO: ${index} a renvoyé ${code} (attendu ${want}) : $(cat "$body")" >&2
+    echo "KO: ${index} returned ${code} (expected ${want}): $(cat "$body")" >&2
     exit 1
   fi
   if [ "$want" = "403" ]; then
     if ! grep -q "access denied to index ${index}" "$body"; then
-      echo "KO: refus de ${index} sans message explicite : $(cat "$body")" >&2
+      echo "KO: denial of ${index} has no explicit message: $(cat "$body")" >&2
       exit 1
     fi
   fi
 }
 
-echo "== 1. OIDC : login alice (code flow) =="
+echo "== 1. OIDC: alice login (code flow) =="
 oidc_session alice "${ALICE_PASSWORD}" "$oidc_jar"
 expect_me "$oidc_jar" alice oidc equipe-a-viewer
-echo "OK: alice authentifiée en OIDC, groupe equipe-a-viewer"
+echo "OK: alice authenticated over OIDC, group equipe-a-viewer"
 echo
 
-echo "== 2. OIDC : index autorisé, index interdit =="
+echo "== 2. OIDC: allowed index, denied index =="
 expect_index "$oidc_jar" equipe-a-sample 200
 expect_index "$oidc_jar" equipe-b-sample 403
-echo "OK: alice lit equipe-a-sample, equipe-b-sample refusé"
+echo "OK: alice reads equipe-a-sample, equipe-b-sample denied"
 echo
 
-echo "== 3. LDAP : login alice =="
+echo "== 3. LDAP: alice login =="
 ldap_code=$(curl -sS -o /dev/null -w '%{http_code}' -c "$ldap_alice_jar" \
   -H 'Content-Type: application/json' \
   -X POST "http://127.0.0.1:8081/auth/ldap" \
   -d "{\"username\":\"alice\",\"password\":\"${ALICE_PASSWORD}\"}")
 if [ "$ldap_code" != "302" ]; then
-  echo "KO: login LDAPS alice a renvoyé ${ldap_code} (attendu 302)" >&2
+  echo "KO: LDAPS login alice returned ${ldap_code} (expected 302)" >&2
   exit 1
 fi
 expect_me "$ldap_alice_jar" alice ldap equipe-a-viewer
-echo "OK: alice authentifiée en LDAPS, groupe equipe-a-viewer"
+echo "OK: alice authenticated over LDAPS, group equipe-a-viewer"
 echo
 
-echo "== 4. LDAP : index autorisé, index interdit =="
+echo "== 4. LDAP: allowed index, denied index =="
 expect_index "$ldap_alice_jar" equipe-a-sample 200
 expect_index "$ldap_alice_jar" equipe-b-sample 403
-echo "OK: alice lit equipe-a-sample, equipe-b-sample refusé"
+echo "OK: alice reads equipe-a-sample, equipe-b-sample denied"
 echo
 
-echo "== 5. LDAP : les groupes décident (carol, equipe-b-viewer) =="
+echo "== 5. LDAP: groups decide (carol, equipe-b-viewer) =="
 carol_code=$(curl -sS -o /dev/null -w '%{http_code}' -c "$ldap_carol_jar" \
   -H 'Content-Type: application/json' \
   -X POST "http://127.0.0.1:8081/auth/ldap" \
   -d "{\"username\":\"carol\",\"password\":\"${CAROL_PASSWORD}\"}")
 if [ "$carol_code" != "302" ]; then
-  echo "KO: login LDAPS carol a renvoyé ${carol_code} (attendu 302)" >&2
+  echo "KO: LDAPS login carol returned ${carol_code} (expected 302)" >&2
   exit 1
 fi
 expect_me "$ldap_carol_jar" carol ldap equipe-b-viewer
 expect_index "$ldap_carol_jar" equipe-b-sample 200
 expect_index "$ldap_carol_jar" equipe-a-sample 403
-echo "OK: carol lit equipe-b-sample, equipe-a-sample refusé"
+echo "OK: carol reads equipe-b-sample, equipe-a-sample denied"
 echo
 
-echo "== 6. Audit : exécutée et bloquée, OIDC puis LDAP =="
+echo "== 6. Audit: allowed and denied, OIDC then LDAP =="
 require_audit() {
   local method="$1"
   local index="$2"
@@ -218,7 +218,7 @@ require_audit() {
     tries=$((tries - 1))
     sleep 1
   done
-  echo "KO: audit manquant (alice ${method} ${index} ${decision})" >&2
+  echo "KO: missing audit line (alice ${method} ${index} ${decision})" >&2
   tail -n 40 "$logf" >&2 || true
   rm -f "$logf"
   exit 1
@@ -227,7 +227,7 @@ require_audit oidc equipe-a-sample allowed
 require_audit oidc equipe-b-sample denied
 require_audit ldap equipe-a-sample allowed
 require_audit ldap equipe-b-sample denied
-echo "OK: les quatre lignes sont dans l'audit"
+echo "OK: the four lines are in the audit"
 echo
 
-echo "OK: scénario J1 (OIDC puis LDAP)"
+echo "OK: phase 1 scenario (OIDC then LDAP)"

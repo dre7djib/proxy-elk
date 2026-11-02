@@ -19,7 +19,7 @@ import (
 var errLDAPDisabled = errors.New("es: ldap authentication is disabled")
 
 // Config wires a Relay. Policy is called once per request, not captured
-// at construction time, so a live ACL reload (SIGHUP, F23) is picked up
+// at construction time, so a live ACL reload (SIGHUP) is picked up
 // without rebuilding the relay.
 type Config struct {
 	Target *url.URL
@@ -37,7 +37,7 @@ type Config struct {
 	// treatment and falls through to the 401 below.
 	Kerberos *auth.Kerberos
 
-	// Limits/Counter enforce the resolved identity's quota (F25), via
+	// Limits/Counter enforce the resolved identity's quota, via
 	// limits.Enforce — the same logic the login mux's Guard uses for
 	// session/JWT identities, applied here for identities Guard never
 	// sees (LDAP Basic auth). Either may be nil for no quota at all.
@@ -48,7 +48,7 @@ type Config struct {
 	Resolver acl.IndexResolver
 
 	// RunAsUser/RunAsPassword authenticate upstream once ACL allows a
-	// request; es-security-runas-user then impersonates the caller (F2).
+	// request; es-security-runas-user then impersonates the caller.
 	RunAsUser     string
 	RunAsPassword string
 	// ShadowPassword is substituted into POST
@@ -160,7 +160,7 @@ func (rl *relay) guarded(id *auth.Identity, w http.ResponseWriter, r *http.Reque
 // how ES tells an already-authenticated caller its own identity, not a
 // data access or administrative action (any ES user can call it on
 // themselves). Kibana's basic-auth login calls this to validate the
-// password it was handed, so blocking it breaks every login (J1-15).
+// password it was handed, so blocking it breaks every login.
 const selfAuthenticatePath = "/_security/_authenticate"
 
 // selfPrivilegesPath is exempt for the same reason: without a username

@@ -1,11 +1,11 @@
-// Dummy engine for spike SP-06 (F78-F82): a minimal HTTP process,
+// Dummy engine for spike: a minimal HTTP process,
 // separate from the proxy (that is the whole point of the architecture decided in the
 // spike plan — the proxy issues, the engine verifies, with different
 // keys). A single useful route, POST /whoami: verifies the short-lived
 // token (RS256 signature, expiration, audience) and returns the identity
 // it carries. No call to Elasticsearch, no natural-language
-// question: this is not the AI assistant (J2-06/J2-07), only the
-// token verifier that SP-06 must validate. Throwaway code, no tests.
+// question: this is not the AI assistant, only the
+// token verifier that must validate. Throwaway code, no tests.
 package main
 
 import (
@@ -22,7 +22,7 @@ import (
 )
 
 // whoamiResponse is what the engine returns once the token is verified:
-// the identity it carries, nothing more (F79: signature, expiration,
+// the identity it carries, nothing more (signature, expiration,
 // audience — no group-based authorization in this spike).
 type whoamiResponse struct {
 	Subject   string   `json:"sub"`
@@ -48,7 +48,7 @@ func main() {
 
 	publicKey, err := loadRSAPublicKey(publicKeyPath)
 	if err != nil {
-		log.Fatalf("invalid JWT public key (SP-06, F79): %v", err)
+		log.Fatalf("invalid JWT public key: %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -58,14 +58,14 @@ func main() {
 	})
 	mux.HandleFunc("/whoami", whoamiHandler(publicKey, audience, clockSkew))
 
-	log.Printf("dummy engine SP-06: listening on %s, expected audience %q, public key %s, clock skew %s",
+	log.Printf("dummy engine: listening on %s, expected audience %q, public key %s, clock skew %s",
 		listenAddr, audience, publicKeyPath, clockSkew)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// whoamiHandler verifies the short-lived token (F79): RS256 signature
+// whoamiHandler verifies the short-lived token: RS256 signature
 // method only (no algorithm confusion), signature, expiration with
 // configurable clock skew, and audience (`aud`) equal to this
 // engine. No other check: no role, no ACL, no network call — a
@@ -94,7 +94,7 @@ func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http
 		)
 		if err != nil {
 			reason := classifyJWTError(err)
-			log.Printf("token denied (SP-06, F79): %s", reason)
+			log.Printf("token denied: %s", reason)
 			respondError(w, &verifyError{http.StatusUnauthorized, reason})
 			return
 		}
@@ -112,7 +112,7 @@ func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http
 			resp.IssuedAt = iat.Unix()
 		}
 
-		log.Printf("token accepted (SP-06, F79): sub=%s groups=%v", resp.Subject, resp.Groups)
+		log.Printf("token accepted: sub=%s groups=%v", resp.Subject, resp.Groups)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -121,7 +121,7 @@ func whoamiHandler(publicKey any, audience string, clockSkew time.Duration) http
 }
 
 // classifyJWTError translates jwt/v5 library errors into readable
-// denial reasons (F79: signature, expiration or audience). The exact
+// denial reasons (signature, expiration or audience). The exact
 // error detail stays in the engine logs (never returned to the
 // client above except in summarized form, so as not to give
 // a useful hint to an attacker).

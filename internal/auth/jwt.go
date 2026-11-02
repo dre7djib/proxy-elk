@@ -15,8 +15,8 @@ import (
 )
 
 // JWTConfig configures a JWT verifier for machine-to-machine Bearer tokens
-// (F13). It never emits tokens; it only checks those an external IdP
-// already issued (not F78, the short-lived Kibana→engine identity token).
+//. It never emits tokens; it only checks those an external IdP
+// already issued (not , the short-lived Kibana→engine identity token).
 type JWTConfig struct {
 	Issuer   string
 	Audience string
