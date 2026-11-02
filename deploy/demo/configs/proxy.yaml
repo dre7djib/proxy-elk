@@ -30,7 +30,10 @@ oidc:
   client_id: proxy
   client_secret: "${env:OIDC_CLIENT_SECRET}"
   redirect_url: http://127.0.0.1:8081/auth/callback
-  scopes: [openid, email, profile, groups]
+  # groups is a client protocol mapper on the demo realm, not a Keycloak
+  # scope. Requesting it makes the authorization endpoint reject the
+  # request (invalid_scope) before the login form.
+  scopes: [openid, email, profile]
   groups_claim: groups
 
 ldap:

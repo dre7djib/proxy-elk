@@ -280,7 +280,11 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 		if err != nil {
 			return nil, fmt.Errorf("oidc discovery: %w", err)
 		}
-		login := &proxy.OIDCLogin{Provider: provider, OnSuccess: sessionOnSuccess(sessions, auth.MethodOIDC)}
+		login := &proxy.OIDCLogin{
+			Provider:  provider,
+			OnSuccess: sessionOnSuccess(sessions, auth.MethodOIDC),
+			Secure:    strings.HasPrefix(cfg.OIDC.RedirectURL, "https://"),
+		}
 		mux.HandleFunc("/auth/login", login.HandleLogin)
 		mux.HandleFunc("/auth/callback", login.HandleCallback)
 	}

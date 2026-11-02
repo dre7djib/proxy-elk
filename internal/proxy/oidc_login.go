@@ -13,10 +13,13 @@ const stateCookie = "oidc_state"
 
 // OIDCLogin drives the authorization code flow against provider. OnSuccess
 // is called with the verified Identity once /callback completes; it is
-// responsible for starting the user's session.
+// responsible for starting the user's session. Secure matches the session
+// cookie: set only when the redirect URL is https, so an HTTP demo can
+// send oidc_state back on the callback.
 type OIDCLogin struct {
 	Provider  *auth.Provider
 	OnSuccess func(w http.ResponseWriter, r *http.Request, id auth.Identity)
+	Secure    bool
 }
 
 // HandleLogin redirects the browser to the provider's authorization endpoint.
@@ -31,31 +34,16 @@ func (o *OIDCLogin) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     stateCookie,
-		Value:    state + "." + nonce,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(5 * time.Minute),
-	})
+	http.SetCookie(w, o.stateCookie(state+"."+nonce, time.Now().Add(5*time.Minute)))
 	http.Redirect(w, r, o.Provider.AuthCodeURL(state, nonce), http.StatusFound)
 }
 
 // HandleCallback validates the provider's response and exchanges the
 // authorization code for an ID token.
 func (o *OIDCLogin) HandleCallback(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     stateCookie,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Unix(0, 0),
-		MaxAge:   -1,
-	})
+	cleared := o.stateCookie("", time.Unix(0, 0))
+	cleared.MaxAge = -1
+	http.SetCookie(w, cleared)
 
 	cookie, err := r.Cookie(stateCookie)
 	if err != nil || cookie.Value == "" {
@@ -83,6 +71,18 @@ func (o *OIDCLogin) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o.OnSuccess(w, r, id)
+}
+
+func (o *OIDCLogin) stateCookie(value string, expires time.Time) *http.Cookie {
+	return &http.Cookie{
+		Name:     stateCookie,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   o.Secure,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expires,
+	}
 }
 
 func splitOnce(s string, sep byte) (string, string, bool) {

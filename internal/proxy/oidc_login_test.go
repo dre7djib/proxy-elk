@@ -71,6 +71,7 @@ func TestOIDCLoginAndCallback(t *testing.T) {
 	var gotIdentity auth.Identity
 	login := &OIDCLogin{
 		Provider: provider,
+		Secure:   true,
 		OnSuccess: func(w http.ResponseWriter, r *http.Request, id auth.Identity) {
 			gotIdentity = id
 			w.WriteHeader(http.StatusOK)
@@ -101,6 +102,9 @@ func TestOIDCLoginAndCallback(t *testing.T) {
 	}
 	if stateCookieVal == nil {
 		t.Fatal("no state cookie set")
+	}
+	if !stateCookieVal.Secure {
+		t.Fatal("state cookie Secure = false, want true for an https redirect")
 	}
 	setNonce(nonce)
 

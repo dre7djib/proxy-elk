@@ -8,6 +8,7 @@ cd deploy/demo
 cp .env.example .env
 docker compose up -d
 ./scripts/verify.sh
+./scripts/accept.sh
 ```
 
 Stop: `docker compose down` (add `-v` to start from scratch: ES,
@@ -58,6 +59,12 @@ both `/auth/ldap` and the ES relay's run_as checks (J1-15). Plaintext port
 The `demo` realm (`keycloak/realm-export.json`) defines the `proxy` client
 and users alice/bob/carol with a `groups` attribute (same group names as
 the spike LDIF: `equipe-a-viewer`, `equipe-a-editor`, `equipe-b-viewer`).
+`groups` is a client protocol mapper, not a Keycloak scope: requesting it
+makes the authorization endpoint return `invalid_scope`. A second mapper
+writes the username into `sub`, so the session subject is `alice` (the
+Elasticsearch `run_as` user and the name in the audit), not Keycloak's
+opaque user id.
+
 The client secret is **committed in plaintext**
 (`demo-oidc-secret-change-me`): a throwaway demo secret, never a prod
 value.
@@ -148,6 +155,23 @@ check, and the J1-15 ES relay:
 6. Kerberos SPNEGO: `401` + `WWW-Authenticate: Negotiate` without a
    ticket, then alice's real ticket (`krb5-user`) through `/auth/kibana`
    and the ES relay
+
+`scripts/accept.sh` is the J1 acceptance scenario (TR-03). It uses the
+session cookie, which is what the audit records (`verify.sh` step 5 uses
+Basic auth, and that identity does not appear in the audit):
+
+1. OIDC authorization-code login as alice (`--resolve keycloak:18080:127.0.0.1`,
+   no `/etc/hosts` entry), then `/auth/me`
+2. alice reads `equipe-a-sample` (200) and is denied `equipe-b-sample`
+   with `access denied to index equipe-b-sample`
+3. The same two reads over LDAP
+4. carol (`equipe-b-viewer`) reads `equipe-b-sample` and is denied
+   `equipe-a-sample`
+5. The proxy logs contain the four JSON lines: alice, `oidc` then `ldap`,
+   `allowed` then `denied`
+
+Ask and Discover are not in this script. They are the J2 acceptance
+criterion.
 
 ## Ports (`127.0.0.1` only, same as the spike)
 
