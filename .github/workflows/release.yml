@@ -1,0 +1,53 @@
+name: Release
+
+# Push on release/vX.Y.Z builds and checks the static binaries (kept as a
+# workflow artifact). Tag + GitHub release are manual: Actions -> Release ->
+# Run workflow, on the release branch. Merge the branch into main after.
+on:
+  push:
+    branches: ["release/v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from branch name
+        id: v
+        run: |
+          VERSION="${GITHUB_REF_NAME#release/}"
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "bad branch name: $GITHUB_REF_NAME (want release/vX.Y.Z)"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Tests
+        run: go test ./...
+
+      - name: Build
+        run: |
+          VERSION=${{ steps.v.outputs.version }} make release
+          (cd dist && sha256sum -c SHA256SUMS)
+          test "$(./dist/proxy-linux-amd64 -version)" = "${{ steps.v.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.v.outputs.version }}
+          path: dist/*
+
+      - name: Tag and publish (manual run only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.version }}" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.v.outputs.version }}" \
+            --generate-notes

@@ -24,10 +24,18 @@ import (
 	"proxy/internal/proxy"
 )
 
+// version is set at build time: -ldflags "-X main.version=1.2.3".
+var version = "dev"
+
 func main() {
 	flags, err := parseFlags(os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(1) // parseFlags already reported the error
+	}
+
+	if flags.version {
+		fmt.Println(version)
+		return
 	}
 
 	if flags.simulate {
@@ -73,6 +81,7 @@ func main() {
 type cliFlags struct {
 	configPath string
 	simulate   bool
+	version    bool
 	subject    string
 	groups     string
 	index      string
@@ -88,6 +97,7 @@ func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
 	var f cliFlags
 	fs.StringVar(&f.configPath, "config", "./configs/proxy.yaml", "config file")
 	fs.BoolVar(&f.simulate, "simulate", false, "simulate an ACL decision instead of starting the server")
+	fs.BoolVar(&f.version, "version", false, "print the version and exit")
 	fs.StringVar(&f.subject, "subject", "", "simulate: caller subject")
 	fs.StringVar(&f.groups, "groups", "", "simulate: comma-separated caller groups")
 	fs.StringVar(&f.index, "index", "", "simulate: index name")
