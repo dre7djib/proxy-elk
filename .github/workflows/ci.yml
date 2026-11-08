@@ -40,9 +40,10 @@ jobs:
         if: steps.gomod.outputs.present == 'true'
         run: |
           VERSION=ci-${GITHUB_SHA::7} make release
-          file dist/proxy-linux-amd64 dist/proxy-linux-arm64
           (cd dist && sha256sum -c SHA256SUMS)
-          ./dist/proxy-linux-amd64 -version
+          tar -xzf dist/proxy-elk_ci-*_linux_amd64.tar.gz -C dist
+          file dist/proxy-elk_ci-*_linux_*/proxy
+          dist/proxy-elk_ci-*_linux_amd64/proxy -version
 
       - name: No Go module yet
         if: steps.gomod.outputs.present == 'false'
