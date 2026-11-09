@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proxy ELK — Documentation</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --bg-elevated: #1a222c;
+      --bg-code: #0b1015;
+      --border: #2a3544;
+      --text: #e7edf4;
+      --muted: #9aa8b8;
+      --accent: #3db8a0;
+      --accent-dim: #2a8f7c;
+      --warn: #e0a35a;
+      --deny: #e06c75;
+      --allow: #7ec699;
+      --link: #6ec6ff;
+      --sidebar-w: 16.5rem;
+      --font: "IBM Plex Sans", "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", "Consolas", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      font-size: 1rem;
+      line-height: 1.65;
+      color: var(--text);
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, #1a3a35 0%, transparent 55%),
+        radial-gradient(ellipse 60% 40% at 100% 0%, #1a2838 0%, transparent 50%),
+        var(--bg);
+    }
+
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar-w) 1fr;
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 1.5rem 1rem 2rem;
+      border-right: 1px solid var(--border);
+      background: rgba(15, 20, 25, 0.92);
+      backdrop-filter: blur(8px);
+    }
+
+    .brand {
+      display: block;
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--text);
+      margin: 0 0 0.25rem;
+      text-decoration: none;
+    }
+    .brand:hover { text-decoration: none; color: var(--accent); }
+    .brand-sub {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    nav ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    nav li { margin: 0.15rem 0; }
+    nav a {
+      display: block;
+      padding: 0.35rem 0.6rem;
+      border-radius: 4px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      text-decoration: none;
+    }
+    nav a:hover,
+    nav a.active {
+      color: var(--text);
+      background: var(--bg-elevated);
+      text-decoration: none;
+    }
+    nav .group {
+      margin-top: 1rem;
+      padding: 0.4rem 0.6rem 0.2rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    main {
+      max-width: 52rem;
+      padding: 2.5rem 2rem 4rem;
+    }
+
+    h1 {
+      font-size: 2.1rem;
+      font-weight: 600;
+      line-height: 1.2;
+      margin: 0 0 0.75rem;
+      letter-spacing: -0.02em;
+    }
+    h2 {
+      font-size: 1.45rem;
+      font-weight: 600;
+      margin: 2.75rem 0 1rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--border);
+      scroll-margin-top: 1.5rem;
+    }
+    h2:first-of-type { border-top: none; margin-top: 2rem; }
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 1.75rem 0 0.65rem;
+      color: var(--accent);
+      scroll-margin-top: 1.5rem;
+    }
+    h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 1.25rem 0 0.5rem;
+      color: var(--muted);
+    }
+
+    p { margin: 0.75rem 0; color: var(--text); }
+    .lead {
+      font-size: 1.1rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+    }
+
+    ul, ol { margin: 0.75rem 0; padding-left: 1.35rem; }
+    li { margin: 0.35rem 0; }
+
+    code, kbd {
+      font-family: var(--mono);
+      font-size: 0.86em;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.1em 0.35em;
+    }
+    pre {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.5;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.92rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    tr:hover td { background: rgba(61, 184, 160, 0.04); }
+
+    .callout {
+      border-left: 3px solid var(--accent);
+      background: var(--bg-elevated);
+      padding: 0.85rem 1rem;
+      margin: 1.25rem 0;
+      border-radius: 0 6px 6px 0;
+    }
+    .callout.warn { border-left-color: var(--warn); }
+    .callout.deny { border-left-color: var(--deny); }
+    .callout strong { color: var(--text); }
+
+    .principles {
+      display: grid;
+      gap: 0.75rem;
+      margin: 1.25rem 0;
+    }
+    .principle {
+      display: grid;
+      grid-template-columns: 7.5rem 1fr;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .principle dt {
+      font-weight: 600;
+      color: var(--accent);
+      font-size: 0.9rem;
+    }
+    .principle dd { margin: 0; color: var(--muted); font-size: 0.92rem; }
+
+    .flow {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: var(--muted);
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.1rem 1.25rem;
+      overflow-x: auto;
+      white-space: pre;
+      margin: 1rem 0;
+    }
+    .flow .hl { color: var(--accent); }
+    .flow .ok { color: var(--allow); }
+    .flow .no { color: var(--deny); }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.15em 0.5em;
+      border-radius: 3px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      vertical-align: middle;
+    }
+    .badge.m1 { color: var(--allow); border-color: #3a6b4f; }
+    .badge.m2 { color: var(--warn); border-color: #7a5a2e; }
+    .badge.m3 { color: var(--muted); }
+
+    .toc-mobile { display: none; }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+      aside {
+        position: relative;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      nav { display: none; }
+      .toc-mobile { display: block; margin-bottom: 0.5rem; }
+      .principle { grid-template-columns: 1fr; gap: 0.25rem; }
+      main { padding: 1.5rem 1.1rem 3rem; }
+    }
+
+    @media print {
+      body { background: #fff; color: #111; }
+      aside { display: none; }
+      .layout { display: block; }
+      a { color: #111; }
+      pre, .flow, .callout, .principle {
+        border-color: #ccc;
+        background: #f7f7f7;
+        color: #111;
+      }
+      h2 { break-before: page; }
+      h2:first-of-type { break-before: auto; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <a class="brand" href="#top">Proxy ELK</a>
+      <div class="brand-sub">Documentation wiki</div>
+      <p class="toc-mobile"><a href="#sommaire">Sommaire ↓</a></p>
+      <nav id="sommaire" aria-label="Sommaire">
+        <ul>
+          <li><a href="#top">Accueil</a></li>
+          <li class="group">Produit</li>
+          <li><a href="#pourquoi">Pourquoi</a></li>
+          <li><a href="#principes">Principes</a></li>
+          <li><a href="#roadmap">Roadmap</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li class="group">Fonctionnel</li>
+          <li><a href="#authentification">Authentification</a></li>
+          <li><a href="#acl">ACL</a></li>
+          <li><a href="#relais">Relais Elasticsearch</a></li>
+          <li><a href="#quotas">Quotas</a></li>
+          <li><a href="#audit">Audit &amp; métriques</a></li>
+          <li><a href="#api">Endpoints HTTP</a></li>
+          <li class="group">Ops</li>
+          <li><a href="#configuration">Configuration</a></li>
+          <li><a href="#deploiement">Déploiement</a></li>
+          <li><a href="#demo">Démo locale</a></li>
+          <li><a href="#cli">CLI</a></li>
+          <li class="group">Gouvernance</li>
+          <li><a href="#securite">Sécurité</a></li>
+          <li><a href="#contribuer">Contribuer</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <main id="top">
+      <h1>Proxy ELK</h1>
+      <p class="lead">
+        Proxy d’authentification et d’autorisation devant un Elasticsearch
+        self-hosted, avec un assistant IA prévu dans Kibana via un plugin
+        minimal. Open source — licence Apache-2.0.
+      </p>
+
+      <div class="callout">
+        <strong>Périmètre actuel (jalon 1)</strong> —
+        authentification (OIDC, LDAP/AD, JWT M2M, Kerberos), ACL en lecture
+        seule, audit JSON, quotas, relais Elasticsearch avec
+        <code>es-security-runas-user</code>, image Docker et binaire systemd.
+        Kibana Cloud est hors scope.
+      </div>
+
+      <!-- ========== POURQUOI ========== -->
+      <h2 id="pourquoi">Pourquoi</h2>
+      <p>
+        Certaines fonctions de sécurité d’Elasticsearch (LDAP / Active Directory,
+        SSO, audit) sont réservées aux offres payantes. Ce projet les apporte
+        <em>devant</em> Elasticsearch, sans toucher au code Elastic ni à sa
+        vérification de licence.
+      </p>
+      <ul>
+        <li>Un seul chemin vers Elasticsearch : le proxy.</li>
+        <li>Identité résolue hors d’Elastic (OIDC, LDAP, JWT, Kerberos).</li>
+        <li>Décision d’accès déclarative (ACL fail-closed, lecture seule).</li>
+        <li>Impersonation upstream via un compte de service +
+          <code>es-security-runas-user</code> — le mot de passe de l’utilisateur
+          n’atteint jamais Elasticsearch.</li>
+      </ul>
+
+      <!-- ========== PRINCIPES ========== -->
+      <h2 id="principes">Principes</h2>
+      <dl class="principles">
+        <div class="principle">
+          <dt>Deny by default</dt>
+          <dd>Toute route ou action non reconnue est refusée.</dd>
+        </div>
+        <div class="principle">
+          <dt>Droits de l’utilisateur</dt>
+          <dd>L’IA n’a jamais plus de droits que la personne connectée.</dd>
+        </div>
+        <div class="principle">
+          <dt>Lecture seule</dt>
+          <dd>Tout ce que l’IA génère reste en lecture seule. Les règles ACL
+            ne peuvent accorder que <code>read</code>.</dd>
+        </div>
+        <div class="principle">
+          <dt>Transparence</dt>
+          <dd>La requête générée est toujours visible et rejouable.</dd>
+        </div>
+        <div class="principle">
+          <dt>Self-hosted</dt>
+          <dd>Kibana self-hosted uniquement. Elastic Cloud est hors scope.</dd>
+        </div>
+      </dl>
+
+      <!-- ========== ROADMAP ========== -->
+      <h2 id="roadmap">Roadmap</h2>
+      <table>
+        <thead>
+          <tr><th>Jalon</th><th>Contenu</th><th>Livrable</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge m1">1</span> Auth</td>
+            <td>OIDC, LDAP/AD, ACL, audit, secrets, relais ES</td>
+            <td>Proxy utilisable seul devant Elasticsearch</td>
+          </tr>
+          <tr>
+            <td><span class="badge m2">2</span> Ask</td>
+            <td>Assistant IA, plugin Kibana, teams &amp; spaces</td>
+            <td>Page « Ask » dans Kibana</td>
+          </tr>
+          <tr>
+            <td><span class="badge m3">3</span> MCP</td>
+            <td>Serveur MCP, analyse de logs</td>
+            <td>Accès MCP + analyse IA d’un log ciblé</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Versions cibles : Elasticsearch et Kibana <strong>8.19</strong>.
+        Une variante 9.x viendra ensuite.
+      </p>
+
+      <!-- ========== ARCHITECTURE ========== -->
+      <h2 id="architecture">Architecture</h2>
+      <p>
+        Le proxy est un binaire Go statique (<code>cmd/proxy</code>) qui écoute
+        HTTP, authentifie l’appelant, décide via l’ACL, puis relaie vers
+        Elasticsearch. Kibana ne parle jamais directement au cluster ES :
+        dans la démo, ES n’a même pas de port exposé sur l’hôte.
+      </p>
+
+      <div class="flow"><span class="hl">Client / Kibana</span>
+        │
+        ▼
+   ┌──────────────── Proxy ELK (:8080) ────────────────┐
+   │  /health  /metrics          (sans auth)           │
+   │  /auth/*  login OIDC|LDAP|Kerberos|JWT            │
+   │  /*       relais ES → identité → ACL → run_as     │
+   └───────────────────────┬───────────────────────────┘
+                           │ Basic (proxy_service)
+                           │ + es-security-runas-user: &lt;subject&gt;
+                           ▼
+                  <span class="hl">Elasticsearch</span></div>
+
+      <h3>Packages internes</h3>
+      <table>
+        <thead>
+          <tr><th>Package</th><th>Rôle</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>internal/config</code></td><td>Chargement YAML, résolution <code>${env:}</code> / <code>${file:}</code>, redaction</td></tr>
+          <tr><td><code>internal/auth</code></td><td>OIDC, LDAP, JWT, Kerberos, sessions HMAC, lockout</td></tr>
+          <tr><td><code>internal/acl</code></td><td>Politique, classification read/write/cluster_admin, décision, résolution d’index</td></tr>
+          <tr><td><code>internal/es</code></td><td>Relais HTTP, run_as, substitution shadow password</td></tr>
+          <tr><td><code>internal/limits</code></td><td>Quotas durée / octets / req·min<sup>−1</sup></td></tr>
+          <tr><td><code>internal/audit</code></td><td>Une ligne JSON par requête d’accès (stdout)</td></tr>
+          <tr><td><code>internal/proxy</code></td><td>Handlers HTTP (health, me, login, metrics, guard)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Flux d’une requête ES</h3>
+      <ol>
+        <li>Identité : cookie de session, ou Bearer JWT, ou Basic (re-vérifié LDAP si besoin).</li>
+        <li>Passthrough : si l’utilisateur est dans <code>passthrough_users</code> (ex. <code>kibana_system</code>), relais tel quel, sans ACL.</li>
+        <li>Classification : méthode + chemin → <code>read</code> | <code>write</code> | <code>cluster_admin</code>.</li>
+        <li>Résolution d’index : aliases → noms concrets via <code>/_resolve/index</code> (API key dédiée).</li>
+        <li>Décision ACL : allow rules uniquement ; sinon 403.</li>
+        <li>Relais : Basic du compte de service + en-tête <code>es-security-runas-user</code>.</li>
+      </ol>
+
+      <!-- ========== AUTH ========== -->
+      <h2 id="authentification">Authentification</h2>
+      <p>
+        Chaque mécanisme se configure par une section YAML. L’omettre le
+        désactive. OIDC, LDAP et Kerberos partagent la même session cookie
+        HMAC (pas de store serveur).
+      </p>
+
+      <h3>OIDC (authorization code)</h3>
+      <ul>
+        <li><code>GET /auth/login</code> → redirection vers l’IdP.</li>
+        <li><code>GET /auth/callback</code> → échange du code, cookie de session, redirect <code>/auth/me</code>.</li>
+        <li>Claim groupes configurable (<code>groups_claim</code>, défaut <code>groups</code>).</li>
+      </ul>
+
+      <h3>LDAP / Active Directory</h3>
+      <ul>
+        <li><code>POST /auth/ldap</code> — login username/password.</li>
+        <li>LDAPS ou LDAP + StartTLS ; plaintext uniquement avec
+          <code>insecure_allow_plaintext</code> (dev).</li>
+        <li>Failover via <code>urls:</code> (liste ordonnée, exclusif avec <code>url</code>).</li>
+        <li>Groupes imbriqués AD : <code>nested_groups: true</code>
+          (<code>LDAP_MATCHING_RULE_IN_CHAIN</code>).</li>
+        <li>Lockout par couple (user, IP) : <code>max_failures</code> /
+          <code>failure_window</code> / <code>lockout_for</code>.</li>
+        <li>Filtre AD typique : <code>(sAMAccountName=%s)</code>.</li>
+      </ul>
+
+      <h3>JWT machine-à-machine</h3>
+      <ul>
+        <li>Le proxy <em>vérifie</em> un Bearer JWT déjà émis par un IdP externe ; il n’en émet jamais.</li>
+        <li>Pas de cookie de session pour ces appelants.</li>
+        <li>Config : <code>issuer</code>, <code>audience</code>, <code>jwks_url</code>.</li>
+      </ul>
+
+      <h3>Kerberos / SPNEGO</h3>
+      <ul>
+        <li>Avec <code>kerberos:</code> + <code>kibana:</code>,
+          <code>GET /auth/kibana</code> devient un challenge Negotiate
+          (plus de formulaire).</li>
+        <li>Le proxy n’appelle jamais le KDC : seul le keytab monté suffit
+          (pas de <code>krb5.conf</code> dans le conteneur).</li>
+        <li>Les groupes viennent toujours de LDAP (<code>lookup</code>).</li>
+      </ul>
+
+      <h3>Pont SSO Kibana</h3>
+      <p>
+        <code>GET/POST /auth/kibana</code> (nécessite <code>ldap:</code> et
+        <code>kibana:</code>) authentifie l’utilisateur puis ouvre la session
+        Kibana pour lui — l’écran de login Kibana n’apparaît pas.
+        <code>url</code> = adresse appelée par le proxy ;
+        <code>public_url</code> = redirection navigateur.
+      </p>
+
+      <h3>Session</h3>
+      <p>
+        Cookie HMAC signé, secret ≥ 32 octets (<code>session.secret</code>),
+        TTL configurable (défaut 8 h). Flag <code>Secure</code> si
+        <code>oidc.redirect_url</code> est en HTTPS.
+      </p>
+
+      <!-- ========== ACL ========== -->
+      <h2 id="acl">ACL</h2>
+      <p>
+        Politique déclarative, <strong>allow rules uniquement</strong>,
+        fail-closed. Le proxy refuse de démarrer sans au moins une règle.
+        Une rule ne peut accorder que <code>actions: [read]</code> —
+        <code>write</code> ou <code>cluster_admin</code> dans le YAML fait
+        échouer le chargement.
+      </p>
+
+      <h3>Correspondance</h3>
+      <ul>
+        <li>Sujet dans <code>users</code>, <strong>ou</strong> intersection
+          non vide avec <code>groups</code>.</li>
+        <li>Indices : motifs glob (<code>path.Match</code>) sur les noms
+          concrets (aliases résolus d’abord).</li>
+        <li>Indices système (<code>.kibana*</code>, <code>.security*</code>, …)
+          refusés par défaut sauf override <code>system_indices</code>.</li>
+        <li><code>known_groups</code> (optionnel) : un groupe inconnu dans une
+          rule fait échouer le load.</li>
+      </ul>
+
+      <h3>Classification des requêtes</h3>
+      <table>
+        <thead>
+          <tr><th>Action</th><th>Quand</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>cluster_admin</code></td>
+            <td>Préfixes <code>/_cluster</code>, <code>/_security</code>,
+              <code>/_nodes</code>, <code>/_license</code>,
+              <code>/_snapshot</code>, <code>/_slm</code>,
+              <code>/_tasks</code>, <code>/_cat</code></td>
+          </tr>
+          <tr>
+            <td><code>read</code></td>
+            <td>GET/HEAD ; ou POST se terminant par
+              <code>/_search</code>, <code>/_msearch</code>,
+              <code>/_count</code>, <code>/_field_caps</code>,
+              <code>/_validate/query</code>, <code>/_async_search</code></td>
+          </tr>
+          <tr>
+            <td><code>write</code></td>
+            <td>Tout le reste</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout deny">
+        Une requête classée <code>write</code> ou <code>cluster_admin</code>
+        est <strong>toujours refusée</strong> par <code>Decide</code>, même si
+        l’index est couvert par une rule.
+      </div>
+
+      <h3>Conditions optionnelles</h3>
+      <p>Toutes les conditions présentes sur une rule doivent matcher :</p>
+      <ul>
+        <li><code>source_ips</code> — IP ou CIDR sur <code>RemoteAddr</code>
+          uniquement (jamais <code>X-Forwarded-For</code>)</li>
+        <li><code>methods</code> — méthodes HTTP</li>
+        <li><code>time</code> — fenêtre UTC <code>from</code>/<code>to</code>
+          (HH:MM) et jours optionnels</li>
+      </ul>
+
+      <h3>Exemple</h3>
+<pre><code>acl:
+  rules:
+    - name: equipe-a-read
+      groups: [equipe-a-viewer, equipe-a-editor]
+      indices: [equipe-a-*, shared-ref]
+      actions: [read]
+    - name: alice-extra
+      users: [alice]
+      indices: [alice-scratch]
+      actions: [read]
+      # source_ips: ["10.0.0.0/8"]
+      # methods: [GET, POST]
+      # time: { from: "08:00", to: "18:00", days: [Mon, Tue, Wed, Thu, Fri] }</code></pre>
+
+      <h3>Simulation hors ligne</h3>
+<pre><code>proxy -config /etc/proxy/proxy.yaml -simulate \
+  -subject alice -groups equipe-a-viewer \
+  -index equipe-a-sample -action read
+# → allow equipe-a-read</code></pre>
+
+      <p>
+        Rechargement à chaud de l’ACL : <code>SIGHUP</code> (revalide toute
+        la config ; en cas d’erreur, l’ancienne politique est conservée).
+      </p>
+
+      <!-- ========== RELAIS ========== -->
+      <h2 id="relais">Relais Elasticsearch</h2>
+      <ul>
+        <li><code>run_as_user</code> / <code>run_as_password</code> : compte de
+          service pour l’auth upstream.</li>
+        <li>Après décision ACL positive : en-tête
+          <code>es-security-runas-user: &lt;subject&gt;</code>.</li>
+        <li><code>api_key</code> : uniquement pour le resolver
+          (<code>/_resolve/index</code>), jamais sur la requête relayée.</li>
+        <li><code>shadow_password</code> : secret native-realm substitué dans
+          <code>POST /_security/profile/_activate</code> après re-vérification
+          du mot de passe LDAP — jamais saisi par l’utilisateur, jamais envoyé
+          à LDAP.</li>
+        <li><code>passthrough_users</code> (défaut <code>kibana_system</code>) :
+          relais inchangé avec les credentials Basic du client, hors ACL.</li>
+      </ul>
+
+      <!-- ========== QUOTAS ========== -->
+      <h2 id="quotas">Quotas</h2>
+      <p>
+        Section <code>limits</code> optionnelle. Appliqués uniquement sur le
+        handler catch-all (pas sur <code>/health</code>, <code>/metrics</code>,
+        <code>/auth/*</code>).
+      </p>
+      <ul>
+        <li><code>max_duration</code>, <code>max_result_bytes</code>,
+          <code>requests_per_minute</code></li>
+        <li><code>default</code> pour les appelants sans rôle ; sinon aucun plafond</li>
+        <li><code>roles</code> : groupes disjoints entre entrées ; si plusieurs
+          matchent → minimum de chaque plafond</li>
+      </ul>
+
+      <!-- ========== AUDIT ========== -->
+      <h2 id="audit">Audit &amp; métriques</h2>
+      <h3>Audit</h3>
+      <p>
+        Une ligne JSON par requête d’accès sur stdout. Jamais de body, cookie
+        ni en-tête <code>Authorization</code>. <code>/health</code>,
+        <code>/healthz</code> et <code>/metrics</code> ne produisent pas de ligne.
+      </p>
+<pre><code>{
+  "ts": "2026-11-09T09:15:00Z",
+  "source": "ui",
+  "user": "alice",
+  "method": "ldap",
+  "decision": "denied",
+  "reason": "access denied to index equipe-b-sample",
+  "http_method": "GET",
+  "path": "/equipe-b-sample/_search",
+  "status": 403,
+  "duration_ms": 12,
+  "bytes": 48
+}</code></pre>
+
+      <h3>Métriques Prometheus</h3>
+      <p>
+        <code>GET /metrics</code> — exposition Prometheus, sans authentification
+        (à restreindre au réseau d’ops).
+      </p>
+
+      <!-- ========== API ========== -->
+      <h2 id="api">Endpoints HTTP</h2>
+      <table>
+        <thead>
+          <tr><th>Méthode</th><th>Chemin</th><th>Auth</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>GET</td><td><code>/health</code>, <code>/healthz</code></td><td>Non</td><td>Liveness</td></tr>
+          <tr><td>GET</td><td><code>/metrics</code></td><td>Non</td><td>Prometheus</td></tr>
+          <tr><td>GET</td><td><code>/auth/me</code></td><td>Session / JWT</td><td>Identité courante</td></tr>
+          <tr><td>GET</td><td><code>/auth/login</code></td><td>—</td><td>Démarrage OIDC</td></tr>
+          <tr><td>GET</td><td><code>/auth/callback</code></td><td>—</td><td>Callback OIDC</td></tr>
+          <tr><td>POST</td><td><code>/auth/ldap</code></td><td>—</td><td>Login LDAP</td></tr>
+          <tr><td>GET/POST</td><td><code>/auth/kibana</code></td><td>—</td><td>Formulaire LDAP ou Negotiate → session Kibana</td></tr>
+          <tr><td>*</td><td><code>/</code> (catch-all)</td><td>Oui</td><td>Relais Elasticsearch</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ========== CONFIG ========== -->
+      <h2 id="configuration">Configuration</h2>
+      <p>
+        Fichier YAML unique (défaut <code>./configs/proxy.yaml</code>,
+        flag <code>-config</code>). Les secrets sont des
+        <strong>références</strong>, jamais des littéraux :
+      </p>
+      <ul>
+        <li><code>${env:NAME}</code> — variable d’environnement</li>
+        <li><code>${file:/path}</code> — contenu d’un fichier (secret monté)</li>
+      </ul>
+      <div class="callout warn">
+        Toujours <strong>citer</strong> les références :
+        YAML traite un <code>{...}</code> non quoté comme un flow mapping.
+      </div>
+
+      <h3>Référence des sections</h3>
+      <table>
+        <thead>
+          <tr><th>Section</th><th>Obligatoire</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>listen</code></td><td>Oui</td><td>Ex. <code>":8080"</code></td></tr>
+          <tr><td><code>elasticsearch</code></td><td>Oui</td><td>URL, api_key, run_as_*, shadow_password</td></tr>
+          <tr><td><code>acl</code></td><td>Oui</td><td>≥ 1 rule, actions read uniquement</td></tr>
+          <tr><td><code>session</code></td><td>Si OIDC/LDAP/Kerberos</td><td>secret ≥ 32 octets, ttl</td></tr>
+          <tr><td><code>oidc</code></td><td>Non</td><td>Omettre pour désactiver</td></tr>
+          <tr><td><code>ldap</code></td><td>Non</td><td>Omettre pour désactiver</td></tr>
+          <tr><td><code>jwt</code></td><td>Non</td><td>M2M Bearer</td></tr>
+          <tr><td><code>kerberos</code></td><td>Non</td><td>Keytab binaire monté (pas <code>${file:}</code>)</td></tr>
+          <tr><td><code>kibana</code></td><td>Non</td><td>Pont SSO ; requiert ldap</td></tr>
+          <tr><td><code>limits</code></td><td>Non</td><td>Quotas par rôle</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Exemple complet annoté :
+        <code>configs/proxy.example.yaml</code>.
+        Variante systemd (secrets fichiers) :
+        <code>deploy/systemd/proxy.yaml</code>.
+      </p>
+
+      <!-- ========== DEPLOIEMENT ========== -->
+      <h2 id="deploiement">Déploiement</h2>
+
+      <h3>Image Docker</h3>
+      <p>
+        Image produit seule (pas de compose de démo embarqué). Config 100 %
+        fichier : monter le YAML en lecture seule, passer les secrets en
+        variables d’environnement. Utilisateur non-root (uid 65532).
+      </p>
+<pre><code>docker build -t proxy-elk .
+docker run --rm -p 8080:8080 \
+  -e SESSION_SECRET=... -e ES_API_KEY=... \
+  -e ES_RUN_AS_PASSWORD=... -e ES_SHADOW_PASSWORD=... \
+  -v "$PWD/configs/my-proxy.yaml:/etc/proxy/proxy.yaml:ro" \
+  proxy-elk
+curl -sf localhost:8080/health
+curl -sf localhost:8080/metrics | head</code></pre>
+
+      <h3>Binaire + systemd</h3>
+      <p>
+        Releases : archives <code>proxy-elk_&lt;version&gt;_linux_{amd64,arm64}.tar.gz</code>
+        + <code>SHA256SUMS</code> (binaire, unit, YAML d’exemple,
+        <code>install.sh</code>).
+      </p>
+<pre><code># En root, depuis le répertoire décompressé de l’archive :
+./install.sh
+# → crée l’utilisateur système proxy, /etc/proxy, /etc/proxy/secrets
+# Éditer /etc/proxy/proxy.yaml, créer les secrets (root:proxy 0640), puis :
+systemctl enable --now proxy-elk</code></pre>
+      <p>
+        Relances ultérieures de <code>install.sh</code> : remplacent le
+        binaire + l’unit et redémarrent le service ; <code>/etc/proxy</code>
+        est préservé.
+      </p>
+      <p>Durcissement unit : <code>NoNewPrivileges</code>,
+        <code>ProtectSystem=strict</code>, <code>ProtectHome</code>,
+        <code>PrivateTmp</code>.</p>
+
+      <h3>Build local des archives</h3>
+<pre><code>VERSION=v1.2.3 make release
+# → dist/proxy-elk_v1.2.3_linux_amd64.tar.gz
+# → dist/proxy-elk_v1.2.3_linux_arm64.tar.gz
+# → dist/SHA256SUMS</code></pre>
+
+      <!-- ========== DEMO ========== -->
+      <h2 id="demo">Démo locale</h2>
+      <p>
+        Stack complète sous <code>deploy/demo/</code> (dérivée de
+        <code>spike/</code>, sans le modifier) :
+      </p>
+<pre><code>cd deploy/demo
+cp .env.example .env
+docker compose up -d
+./scripts/verify.sh
+./scripts/accept.sh</code></pre>
+
+      <h3>Services</h3>
+      <table>
+        <thead>
+          <tr><th>Service</th><th>Rôle</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>elasticsearch</code></td><td>Cluster single-node, réseau <code>es</code> interne uniquement</td></tr>
+          <tr><td><code>proxy</code></td><td>Image produit — seul chemin Kibana → ES</td></tr>
+          <tr><td><code>kibana</code></td><td>8.19 + plugin spike_ask</td></tr>
+          <tr><td><code>openldap</code></td><td>Annuaire de test (alice / bob / carol)</td></tr>
+          <tr><td><code>keycloak</code></td><td>IdP OIDC, realm <code>demo</code></td></tr>
+          <tr><td><code>kdc</code> / <code>krb5-user</code></td><td>Kerberos SPNEGO</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Réseaux</h3>
+      <ul>
+        <li><code>es</code> (<code>internal: true</code>) : Elasticsearch,
+          proxy, jobs one-shot.</li>
+        <li><code>demo</code> : ports hôte (Kibana, LDAP, Keycloak, proxy).</li>
+      </ul>
+      <p>
+        Contrôle : <code>curl http://127.0.0.1:9200</code> doit refuser la
+        connexion. Seul <code>127.0.0.1:8081</code> (proxy) mène à ES.
+      </p>
+
+      <h3>Ports (127.0.0.1)</h3>
+      <table>
+        <thead>
+          <tr><th>Port</th><th>Service</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>5601</td><td>Kibana</td></tr>
+          <tr><td>1389 / 1636</td><td>OpenLDAP (plain / LDAPS)</td></tr>
+          <tr><td>18080</td><td>Keycloak</td></tr>
+          <tr><td>8081</td><td>Proxy (produit)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Login interactif OIDC</h3>
+<pre><code>echo "127.0.0.1 keycloak" | sudo tee -a /etc/hosts
+# puis http://127.0.0.1:8081/auth/login</code></pre>
+
+      <!-- ========== CLI ========== -->
+      <h2 id="cli">CLI</h2>
+<pre><code>proxy -version
+proxy -config /etc/proxy/proxy.yaml
+proxy -config ... -simulate \
+  -subject alice -groups equipe-a-viewer \
+  -index equipe-a-sample -action read \
+  [-ip 10.0.0.1] [-method GET] [-time 2026-11-09T10:00:00Z]</code></pre>
+      <p>
+        Au démarrage, la config redacted est écrite sur stdout (JSON) ;
+        « listening on … » sur stderr.
+      </p>
+
+      <!-- ========== SECURITE ========== -->
+      <h2 id="securite">Sécurité</h2>
+      <div class="callout deny">
+        <strong>Ne pas ouvrir d’issue publique</strong> pour une faille de
+        sécurité. Utiliser l’onglet Security GitHub (« Report a vulnerability »)
+        ou l’email indiqué dans <code>SECURITY.md</code> (objet
+        <code>[SECURITY] …</code>).
+      </div>
+      <p>Exemples de failles dans le périmètre :</p>
+      <ul>
+        <li>Contournement auth / ACL (aliases, wildcards, indices système)</li>
+        <li>Accès à Elasticsearch sans passer par le proxy</li>
+        <li>Injection (LDAP, ES|QL, prompt) permettant lecture/écriture non autorisée</li>
+        <li>Fuite de secrets dans logs ou audit</li>
+        <li>Usurpation via tokens (JWT, en-têtes d’identité)</li>
+      </ul>
+      <p>
+        Accusé de réception sous 7 jours (engagement de bonne foi, pas un
+        contrat de service). Divulgation coordonnée.
+      </p>
+
+      <!-- ========== CONTRIBUER ========== -->
+      <h2 id="contribuer">Contribuer</h2>
+      <p>
+        Le projet n’accepte pas encore de contributions externes. Quand ce
+        sera le cas : chaque commit porte une ligne
+        <code>Signed-off-by</code> sous le
+        <a href="https://developercertificate.org/">DCO 1.1</a>, et les
+        messages suivent
+        <a href="https://www.conventionalcommits.org/">Conventional Commits</a>.
+      </p>
+<pre><code>git config core.hooksPath .githooks</code></pre>
+      <p>Licence : <strong>Apache-2.0</strong>.</p>
+
+      <footer>
+        Documentation HTML destinée au wiki GitHub —
+        générée à partir du dépôt <code>proxy-elk</code> (branche de doc).
+        Sources de vérité : <code>README.md</code>,
+        <code>configs/proxy.example.yaml</code>,
+        <code>deploy/demo/README.md</code>, <code>SECURITY.md</code>.
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      var links = document.querySelectorAll("aside nav a[href^='#']");
+      var sections = [];
+      links.forEach(function (a) {
+        var id = a.getAttribute("href").slice(1);
+        var el = document.getElementById(id);
+        if (el) sections.push({ id: id, el: el, a: a });
+      });
+      function sync() {
+        var y = window.scrollY + 120;
+        var current = sections[0];
+        for (var i = 0; i < sections.length; i++) {
+          if (sections[i].el.offsetTop <= y) current = sections[i];
+        }
+        links.forEach(function (a) { a.classList.remove("active"); });
+        if (current) current.a.classList.add("active");
+      }
+      window.addEventListener("scroll", sync, { passive: true });
+      sync();
+    })();
+  </script>
+</body>
+</html>
