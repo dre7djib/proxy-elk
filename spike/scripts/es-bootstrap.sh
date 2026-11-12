@@ -20,7 +20,8 @@
 #      exist in the directory. Elasticsearch has no LDAP realm here (paid
 #      feature): these accounts' LDAP password (the one the user types in
 #      Kibana) is validated by the proxy via search-then-bind, never
-#      by Elasticsearch.
+#      by Elasticsearch. Extra LDAP people (e.g. dave) are *not* created
+#      here: Spike Users (plugin UI) provisions their shadow user later.
 #
 # runtime finding: their ES password CANNOT be random and discarded.
 # Kibana calls POST /_security/profile/_activate right after

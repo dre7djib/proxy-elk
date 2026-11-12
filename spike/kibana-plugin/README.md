@@ -26,9 +26,12 @@ want to try it.
 Deliberately minimal scope (+):
 
 - a “Spike Ask” application in the left menu ([`public/`](spike_ask/public/)), a button, a `<pre>` that displays the engine’s response;
-- a single server route, `POST /api/spike_ask/ask` ([`server/routes/ask.ts`](spike_ask/server/routes/ask.ts)), which:
-  1. calls `POST /_spike/identity-token` on Elasticsearch via `context.core.elasticsearch.client.asCurrentUser` (never `asInternalUser`: this is the point that makes the token minted by the proxy carry alice’s identity, not that of `kibana_system`) — this is the “token requested via ES with the user’s session” variant of the spike plan;
-  2. relays the received token, without reading or modifying it, to the dummy engine (`POST {engineUrl}/whoami`, `Authorization: Bearer <token>`);
-  3. returns the engine’s response (verified identity) or the error to the UI.
+- a “Spike Users” application ([`public/users_application.tsx`](spike_ask/public/users_application.tsx)): form to create the Elasticsearch *shadow* user for an LDAP uid that already exists (username, full name, team role). The native password is never typed in the UI — it comes from `spikeAsk.shadowPassword` (`SPIKEASK_SHADOWPASSWORD` in compose, same secret as `NATIVE_SHADOW_PASSWORD`);
+- server routes:
+  - `POST /api/spike_ask/ask` ([`server/routes/ask.ts`](spike_ask/server/routes/ask.ts)):
+    1. calls `POST /_spike/identity-token` on Elasticsearch via `context.core.elasticsearch.client.asCurrentUser` (never `asInternalUser`: this is the point that makes the token minted by the proxy carry alice’s identity, not that of `kibana_system`) — this is the “token requested via ES with the user’s session” variant of the spike plan;
+    2. relays the received token, without reading or modifying it, to the dummy engine (`POST {engineUrl}/whoami`, `Authorization: Bearer <token>`);
+    3. returns the engine’s response (verified identity) or the error to the UI.
+  - `POST /api/spike_ask/users` ([`server/routes/users.ts`](spike_ask/server/routes/users.ts)): `PUT /_security/user/<uid>` with the shadow password + role via `asCurrentUser`, then extends `proxy_runas.run_as` so the proxy can impersonate the new user. Callers without manage-security (e.g. alice) get 403. Verify with [`../scripts/verify-create-user.sh`](../scripts/verify-create-user.sh) (LDAP-only `dave`).
 
 No natural-language question, no Discover link, no dependency on `data`/`discover`: that remains later work. The plugin holds no signing key: there is neither a private key nor a public key in this folder.
