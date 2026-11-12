@@ -1,4 +1,6 @@
-# `spike_ask` — minimal Kibana plugin of spike
+# Kibana plugins of the spike
+
+## `spike_ask` — short-lived token → dummy engine
 
 Plugin source code ([`spike_ask/`](spike_ask/)), to copy into
 `kibana/plugins/spike_ask/` of a checkout of the
@@ -9,6 +11,17 @@ the Kibana image via `bin/kibana-plugin install`. See
 [`../kibana/Dockerfile`](../kibana/Dockerfile) for the full automation
 and the runtime finding on the feasibility of this build in the spike
 environment.
+
+## `spike_smtp_mail` — SMTP on Basic without Connectors
+
+Separate sketch ([`spike_smtp_mail/`](spike_smtp_mail/)): an Alerting **rule
+type** with `minimumLicenseRequired: 'basic'` whose executor sends mail over
+SMTP directly. It does **not** register an Actions connector (that path is
+hard-gated to Gold+ for third parties). The public side registers the form with
+`triggersActionsUi` so you create the rule in **Stack Management → Rules**
+(not only via API). See its [README](spike_smtp_mail/README.md).
+Not wired into the compose image yet — copy/build like `spike_ask` when you
+want to try it.
 
 Deliberately minimal scope (+):
 
