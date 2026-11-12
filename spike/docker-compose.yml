@@ -214,6 +214,9 @@ services:
       # config schema defaultValue (kibana-plugin/spike_ask/server/config.ts)
       # already points to http://engine:8080, which is the correct address of
       # the `engine` service below on the `spike` network.
+      # Shadow password for Spike Users (POST /api/spike_ask/users): same
+      # secret as NATIVE_SHADOW_PASSWORD / es-bootstrap native users.
+      - SPIKEASK_SHADOWPASSWORD=${NATIVE_SHADOW_PASSWORD}
     mem_limit: 1g
     ports:
       - "127.0.0.1:5601:5601"

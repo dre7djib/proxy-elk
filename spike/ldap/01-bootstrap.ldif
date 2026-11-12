@@ -52,12 +52,26 @@ sn: Petit
 mail: carol@example.org
 userPassword: carolpass
 
+# dave: present in LDAP only. No native ES user in es-bootstrap.sh —
+# Spike Users (plugin UI / POST /api/spike_ask/users) creates the shadow
+# account. Used by scripts/verify-create-user.sh.
+dn: uid=dave,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: dave
+cn: Dave Leroy
+sn: Leroy
+mail: dave@example.org
+userPassword: davepass
+
 # Team groups: one group = one team + one level.
 dn: cn=equipe-a-viewer,ou=groups,dc=example,dc=org
 objectClass: groupOfNames
 cn: equipe-a-viewer
 description: Team A viewers
 member: uid=alice,ou=people,dc=example,dc=org
+member: uid=dave,ou=people,dc=example,dc=org
 
 dn: cn=equipe-a-editor,ou=groups,dc=example,dc=org
 objectClass: groupOfNames

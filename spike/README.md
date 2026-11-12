@@ -55,6 +55,7 @@ LDAP test users (`ldap/01-bootstrap.ldif`), passwords in clear in the LDIF (spik
 | alice | alicepass | `equipe-a-viewer` | `equipe_a_viewer` (read) | `equipe-a` only |
 | bob | bobpass | `equipe-a-editor` | `equipe_a_editor` (Kibana read+write) | `equipe-a` only |
 | carol | carolpass | `equipe-b-viewer` | `equipe_b_viewer` (read) | `equipe-b` only |
+| dave | davepass | `equipe-a-viewer` | created by Spike Users UI (not in `es-bootstrap.sh`) | `equipe-a` after create |
 
 The LDAP group is not yet mapped automatically to the ES role (groups → team/level mapping): assignment remains static in [`scripts/es-bootstrap.sh`](scripts/es-bootstrap.sh); the YAML config comes later. On the Elasticsearch side, alice/bob/carol have a native password that is **never** the one above (see the finding below): only the LDAP password counts for login.
 
@@ -234,7 +235,7 @@ alice → plugin (UI) → Kibana server route → asCurrentUser → proxy (POST 
 
 - The **proxy** ([`proxy/main.go`](proxy/main.go), `mintIdentityTokenMiddleware`) answers itself, never relaying to Elasticsearch, on `POST /_spike/identity-token`: it issues an RS256 JWT (`iss=spike-proxy`, `aud=spike-engine`, `sub=<user>`, `groups=<LDAP groups>`, TTL 5 min) signed with a private key that only it holds ([`keys/README.md`](keys/README.md)).
 - The **dummy engine** ([`engine/`](engine/), new `engine` service) holds only the matching **public** key: it verifies the signature method (RS256 only), the signature, expiration (with 60 s clock-skew tolerance) and the audience, then returns the identity carried by the token. No call to Elasticsearch, no AI assistant logic: this is not.
-- The **plugin** ([`kibana-plugin/spike_ask/`](kibana-plugin/)) holds no key: its single server route (`POST /api/spike_ask/ask`) calls `/_spike/identity-token` via `context.core.elasticsearch.client.asCurrentUser` (never `asInternalUser`, so the token carries the real user’s identity and not that of `kibana_system`), then relays the received token, verbatim, to the engine.
+- The **plugin** ([`kibana-plugin/spike_ask/`](kibana-plugin/)) holds no key: its Ask route (`POST /api/spike_ask/ask`) calls `/_spike/identity-token` via `context.core.elasticsearch.client.asCurrentUser` (never `asInternalUser`, so the token carries the real user’s identity and not that of `kibana_system`), then relays the received token, verbatim, to the engine. It also exposes **Spike Users** (`POST /api/spike_ask/users`): create the ES shadow user for an LDAP uid that already exists (shared `SPIKEASK_SHADOWPASSWORD`, team role, extend `proxy_runas`) — see [`scripts/verify-create-user.sh`](scripts/verify-create-user.sh) and LDAP-only `dave`.
 
 ### Runtime finding — two possible identities behind `asCurrentUser`
 
