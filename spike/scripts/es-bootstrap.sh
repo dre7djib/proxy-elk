@@ -61,7 +61,7 @@ curl -sf -X PUT "${AUTH[@]}" \
   -d '{
     "cluster": [],
     "indices": [],
-    "run_as": ["alice", "bob", "carol"]
+    "run_as": ["alice", "bob", "carol", "john"]
   }' >/dev/null
 echo "OK"
 
@@ -117,5 +117,6 @@ create_stub_role equipe_b_viewer
 create_native_user alice "Alice Martin" equipe_a_viewer
 create_native_user bob "Bob Durand" equipe_a_editor
 create_native_user carol "Carol Petit" equipe_b_viewer
+create_native_user john "John Admin" superuser
 
 echo "Elasticsearch bootstrap complete (to)."

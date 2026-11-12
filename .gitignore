@@ -3,7 +3,10 @@ spike/.env
 
 .cursor/
 
+
 # macOS
 .DS_Store
 
 dist/
+
+docs/
