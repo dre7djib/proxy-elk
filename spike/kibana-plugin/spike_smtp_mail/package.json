@@ -1,0 +1,13 @@
+{
+  "name": "spike_smtp_mail",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Spike: Basic-license Alerting rule type that sends SMTP mail outside the Connectors framework.",
+  "kibana": {
+    "version": "kibana"
+  },
+  "scripts": {
+    "build": "node ../../scripts/plugin_helpers build",
+    "kbn:bootstrap": "node ../../scripts/plugin_helpers build --dev"
+  }
+}
