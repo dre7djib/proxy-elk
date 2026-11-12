@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy ELK
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=proxy
+Group=proxy
+# Secrets are files referenced from proxy.yaml with ${file:}; none here.
+ExecStart=/usr/local/bin/proxy -config /etc/proxy/proxy.yaml
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

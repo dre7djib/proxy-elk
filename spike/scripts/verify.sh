@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Checks the success criteria for SP-01 to SP-04:
+# Checks the success criteria for to:
 # - Kibana accepts a native login, OpenLDAP contains alice, bob, carol
-#   with their team groups (SP-01);
+#   with their team groups;
 # - the proxy between Kibana and Elasticsearch is a transparent passthrough,
-#   and login/Discover work through it (SP-02);
+#   and login/Discover work through it;
 # - Alice logs into Kibana with her LDAP password and appears with
 #   her own identity and role (run_as), a wrong password is
-#   refused, and the native elastic login still works (SP-03);
-# - ES roles and Kibana spaces per team (SP-04): alice (equipe_a_viewer)
+#   refused, and the native elastic login still works;
+# - ES roles and Kibana spaces per team: alice (equipe_a_viewer)
 #   only sees the equipe-a space in read-only and equipe-a-* data, bob
 #   (equipe_a_editor) can edit a dashboard in the equipe-a space, carol
 #   (equipe_b_viewer) sees neither the equipe-a space nor its data.
@@ -46,7 +46,7 @@ wait_for() {
 
 echo "== Waiting for services =="
 wait_for "Elasticsearch" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200
-wait_for "Proxy (SP-02)" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9210
+wait_for "Proxy" curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9210
 wait_for "Kibana" curl -sf http://127.0.0.1:5601/api/status
 wait_for "OpenLDAP" "${COMPOSE[@]}" exec -T openldap ldapwhoami -x -H ldap://localhost:389 \
   -D "cn=admin,dc=example,dc=org" -w "${LDAP_ADMIN_PASSWORD}"
@@ -58,7 +58,7 @@ curl -sf -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200 >/dev/null
 echo "OK"
 echo
 
-echo "== Proxy (SP-02): transparent passthrough =="
+echo "== Proxy: transparent passthrough =="
 es_body=$(curl -s -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9200)
 proxy_body=$(curl -s -u "elastic:${ELASTIC_PASSWORD}" http://127.0.0.1:9210)
 if [ "$es_body" != "$proxy_body" ]; then
@@ -72,7 +72,7 @@ fi
 echo "OK: identical response direct and via the proxy (transparent passthrough)"
 echo
 
-echo "== Proxy (SP-02): authenticated search (Discover-like) =="
+echo "== Proxy: authenticated search (Discover-like) =="
 search_code=$(curl -s -o /dev/null -w '%{http_code}' -u "elastic:${ELASTIC_PASSWORD}" \
   "http://127.0.0.1:9210/_search?size=0")
 if [ "$search_code" != "200" ]; then
@@ -133,7 +133,7 @@ fi
 echo "OK: bind refused as expected"
 echo
 
-echo "== Proxy (SP-03/SP-04): Elasticsearch sees alice's identity via run_as =="
+echo "== Proxy: Elasticsearch sees alice's identity via run_as =="
 authn_body=$(curl -s -u "alice:${ALICE_PASSWORD}" http://127.0.0.1:9210/_security/_authenticate)
 if ! echo "$authn_body" | grep -qE '"username"[[:space:]]*:[[:space:]]*"alice"'; then
   echo "KO: _authenticate via the proxy does not return alice's identity" >&2
@@ -145,10 +145,10 @@ if ! echo "$authn_body" | grep -q '"equipe_a_viewer"'; then
   echo "$authn_body" >&2
   exit 1
 fi
-echo "OK: Elasticsearch authenticates alice (run_as), equipe_a_viewer role present (SP-04)"
+echo "OK: Elasticsearch authenticates alice (run_as), equipe_a_viewer role present"
 echo
 
-echo "== Proxy (SP-03): wrong LDAP password refused by Elasticsearch =="
+echo "== Proxy: wrong LDAP password refused by Elasticsearch =="
 bad_ldap_code=$(curl -s -o /dev/null -w '%{http_code}' -u "alice:mauvais-mot-de-passe" \
   http://127.0.0.1:9210/_security/_authenticate)
 if [ "$bad_ldap_code" != "401" ]; then
@@ -158,7 +158,7 @@ fi
 echo "OK: wrong LDAP password refused (401) before reaching Elasticsearch"
 echo
 
-echo "== Kibana (SP-03): alice logs in with her LDAP password =="
+echo "== Kibana: alice logs in with her LDAP password =="
 alice_cookie_jar=$(mktemp)
 alice_response_body=$(mktemp)
 trap 'rm -f "$cookie_jar" "$response_body" "$alice_cookie_jar" "$alice_response_body"' EXIT
@@ -191,11 +191,11 @@ if ! echo "$me_body" | grep -q '"equipe_a_viewer"'; then
   echo "$me_body" >&2
   exit 1
 fi
-echo "OK: Kibana shows alice's identity and role (SP-03 success criterion)"
+echo "OK: Kibana shows alice's identity and role (success criterion)"
 echo "    Visual check recommended: http://127.0.0.1:5601, user menu = Alice Martin"
 echo
 
-echo "== Kibana (SP-03): wrong LDAP password refused =="
+echo "== Kibana: wrong LDAP password refused =="
 alice_bad_code=$(curl -s -o /dev/null -w '%{http_code}' \
   -H 'kbn-xsrf: true' -H 'Content-Type: application/json' \
   -X POST http://127.0.0.1:5601/internal/security/login \
@@ -216,10 +216,10 @@ if [ "$elastic_regression_code" != "200" ]; then
   echo "KO: native elastic login regressed ($elastic_regression_code)" >&2
   exit 1
 fi
-echo "OK: elastic still logs in directly (without going through LDAP, SP-01/SP-02 not regressed)"
+echo "OK: elastic still logs in directly (without going through LDAP, not regressed)"
 echo
 
-echo "== Waiting for the kibana-setup service (SP-04) =="
+echo "== Waiting for the kibana-setup service =="
 kibana_setup_tries=30
 until "${COMPOSE[@]}" ps -a kibana-setup --format '{{.State}}' 2>/dev/null | grep -q '^exited$'; do
   kibana_setup_tries=$((kibana_setup_tries - 1))
@@ -237,7 +237,7 @@ fi
 echo "OK: kibana-setup finished successfully (equipe-a/equipe-b spaces and roles ready)"
 echo
 
-echo "== Kibana (SP-04): bob (team A, editor) logs in =="
+echo "== Kibana: bob (team A, editor) logs in =="
 bob_cookie_jar=$(mktemp)
 carol_cookie_jar=$(mktemp)
 trap 'rm -f "$cookie_jar" "$response_body" "$alice_cookie_jar" "$alice_response_body" "$bob_cookie_jar" "$carol_cookie_jar"' EXIT
@@ -253,7 +253,7 @@ fi
 echo "OK: bob authenticated by Kibana"
 echo
 
-echo "== Kibana (SP-04): carol (team B, viewer) logs in =="
+echo "== Kibana: carol (team B, viewer) logs in =="
 carol_http_code=$(curl -s -o /dev/null -w '%{http_code}' \
   -c "$carol_cookie_jar" \
   -H 'kbn-xsrf: true' -H 'Content-Type: application/json' \
@@ -266,7 +266,7 @@ fi
 echo "OK: carol authenticated by Kibana"
 echo
 
-echo "== Kibana (SP-04): alice sees only the equipe-a space =="
+echo "== Kibana: alice sees only the equipe-a space =="
 alice_spaces=$(curl -s -b "$alice_cookie_jar" http://127.0.0.1:5601/api/spaces/space)
 if ! echo "$alice_spaces" | grep -q '"id":"equipe-a"'; then
   echo "KO: alice does not see the equipe-a space" >&2
@@ -281,7 +281,7 @@ fi
 echo "OK: alice only sees the equipe-a space"
 echo
 
-echo "== Kibana (SP-04): alice reads the dashboard in the equipe-a space =="
+echo "== Kibana: alice reads the dashboard in the equipe-a space =="
 alice_dashboard_get=$(curl -s -o /dev/null -w '%{http_code}' -b "$alice_cookie_jar" \
   "http://127.0.0.1:5601/s/equipe-a/api/saved_objects/dashboard/spike-dashboard-equipe-a")
 if [ "$alice_dashboard_get" != "200" ]; then
@@ -291,7 +291,7 @@ fi
 echo "OK: alice reads team A's dashboard"
 echo
 
-echo "== Kibana (SP-04): alice (viewer) CANNOT edit A's dashboard =="
+echo "== Kibana: alice (viewer) CANNOT edit A's dashboard =="
 alice_dashboard_put=$(curl -s -o /dev/null -w '%{http_code}' -b "$alice_cookie_jar" \
   -H 'kbn-xsrf: true' -H 'Content-Type: application/json' \
   -X PUT "http://127.0.0.1:5601/s/equipe-a/api/saved_objects/dashboard/spike-dashboard-equipe-a" \
@@ -303,7 +303,7 @@ fi
 echo "OK: alice (viewer) cannot edit A's dashboard (403)"
 echo
 
-echo "== Kibana (SP-04): alice (base read) has no access to Dev Tools =="
+echo "== Kibana: alice (base read) has no access to Dev Tools =="
 alice_devtools_code=$(curl -s -o /dev/null -w '%{http_code}' -b "$alice_cookie_jar" \
   -H 'kbn-xsrf: true' \
   -X POST "http://127.0.0.1:5601/api/console/proxy?path=_search&method=GET")
@@ -311,10 +311,10 @@ if [ "$alice_devtools_code" != "403" ]; then
   echo "KO: alice (viewer, base read) accessed Dev Tools (code $alice_devtools_code, expected 403)" >&2
   exit 1
 fi
-echo "OK: Dev Tools refused to alice by base:read alone (F75 finding: no custom feature privileges needed)"
+echo "OK: Dev Tools refused to alice by base:read alone (finding: no custom feature privileges needed)"
 echo
 
-echo "== Kibana (SP-04): bob (editor) can edit A's dashboard =="
+echo "== Kibana: bob (editor) can edit A's dashboard =="
 bob_dashboard_put=$(curl -s -o /dev/null -w '%{http_code}' -b "$bob_cookie_jar" \
   -H 'kbn-xsrf: true' -H 'Content-Type: application/json' \
   -X PUT "http://127.0.0.1:5601/s/equipe-a/api/saved_objects/dashboard/spike-dashboard-equipe-a" \
@@ -323,10 +323,10 @@ if [ "$bob_dashboard_put" != "200" ]; then
   echo "KO: bob (editor) could not edit A's dashboard (code $bob_dashboard_put)" >&2
   exit 1
 fi
-echo "OK: bob (editor) edits A's dashboard (SP-04 success criterion)"
+echo "OK: bob (editor) edits A's dashboard (success criterion)"
 echo
 
-echo "== Kibana (SP-04): carol only sees the equipe-b space, not equipe-a =="
+echo "== Kibana: carol only sees the equipe-b space, not equipe-a =="
 carol_spaces=$(curl -s -b "$carol_cookie_jar" http://127.0.0.1:5601/api/spaces/space)
 if echo "$carol_spaces" | grep -q '"id":"equipe-a"'; then
   echo "KO: carol sees the equipe-a space, which should be invisible to her" >&2
@@ -341,7 +341,7 @@ fi
 echo "OK: carol only sees the equipe-b space"
 echo
 
-echo "== Kibana (SP-04): carol has no direct access to A's space or dashboard =="
+echo "== Kibana: carol has no direct access to A's space or dashboard =="
 carol_space_a_code=$(curl -s -o /dev/null -w '%{http_code}' -b "$carol_cookie_jar" \
   "http://127.0.0.1:5601/api/spaces/space/equipe-a")
 if [ "$carol_space_a_code" != "403" ]; then
@@ -354,10 +354,10 @@ if [ "$carol_dashboard_a_code" != "403" ]; then
   echo "KO: carol was able to read A's dashboard (code $carol_dashboard_a_code, expected 403)" >&2
   exit 1
 fi
-echo "OK: carol sees nothing of team A, neither the space nor the dashboard (SP-04 success criterion)"
+echo "OK: carol sees nothing of team A, neither the space nor the dashboard (success criterion)"
 echo
 
-echo "== Proxy (SP-04): equipe-a-*/equipe-b-* data isolation via run_as =="
+echo "== Proxy: equipe-a-*/equipe-b-* data isolation via run_as =="
 alice_data_a=$(curl -s -o /dev/null -w '%{http_code}' -u "alice:${ALICE_PASSWORD}" \
   "http://127.0.0.1:9210/equipe-a-sample/_search")
 alice_data_b=$(curl -s -o /dev/null -w '%{http_code}' -u "alice:${ALICE_PASSWORD}" \
@@ -375,9 +375,9 @@ echo "    carol reads equipe-b-sample (200) and not equipe-a-sample (403, run_as
 echo
 
 echo "All green: Elasticsearch and Kibana accept the native elastic login,"
-echo "through a transparent proxy that logs calls (SP-02);"
+echo "through a transparent proxy that logs calls;"
 echo "OpenLDAP contains alice, bob, carol and their team groups, and alice"
 echo "logs into Kibana with her LDAP password under her own identity,"
-echo "with the equipe_a_viewer role, via the proxy's run_as (SP-03, approach A);"
+echo "with the equipe_a_viewer role, via the proxy's run_as (approach A);"
 echo "alice only reads team A's space and data, bob edits a"
-echo "team A dashboard, carol sees nothing of team A (SP-04)."
+echo "team A dashboard, carol sees nothing of team A."

@@ -1,4 +1,4 @@
-# OpenLDAP bootstrap for the SP-01 spike.
+# OpenLDAP bootstrap for the spike.
 # Loaded by osixia/openldap (image --copy-service) from the folder mounted
 # at /container/service/slapd/assets/config/bootstrap/ldif/custom.
 # The dc=example,dc=org root and the admin (cn=admin,dc=example,dc=org) are
@@ -7,7 +7,7 @@
 # Passwords are in the clear: disposable test data, not a real
 # secret. If you change them here, also update spike/.env.example.
 #
-# The read account for search-then-bind (F4, SP-03) is NOT defined
+# The read account for search-then-bind is NOT defined
 # here: it is created by the image via LDAP_READONLY_USER=true (docker-compose),
 # which also adds a read ACL on the whole tree. An account created by
 # hand in this LDIF would, by default, only have the right to read its own
@@ -52,12 +52,37 @@ sn: Petit
 mail: carol@example.org
 userPassword: carolpass
 
-# Team groups (F70-F72): one group = one team + one level.
+# dave: present in LDAP only. No native ES user in es-bootstrap.sh —
+# Spike Users (plugin UI / POST /api/spike_ask/users) creates the shadow
+# account. Used by scripts/verify-create-user.sh.
+dn: uid=dave,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: dave
+cn: Dave Leroy
+sn: Leroy
+mail: dave@example.org
+userPassword: davepass
+
+# john: full-rights admin (ES role superuser, set in es-bootstrap.sh).
+dn: uid=john,ou=people,dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: john
+cn: John Admin
+sn: Admin
+mail: john@example.org
+userPassword: johnpass
+
+# Team groups: one group = one team + one level.
 dn: cn=equipe-a-viewer,ou=groups,dc=example,dc=org
 objectClass: groupOfNames
 cn: equipe-a-viewer
 description: Team A viewers
 member: uid=alice,ou=people,dc=example,dc=org
+member: uid=dave,ou=people,dc=example,dc=org
 
 dn: cn=equipe-a-editor,ou=groups,dc=example,dc=org
 objectClass: groupOfNames
@@ -70,3 +95,9 @@ objectClass: groupOfNames
 cn: equipe-b-viewer
 description: Team B viewers
 member: uid=carol,ou=people,dc=example,dc=org
+
+dn: cn=admins,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: admins
+description: Full-rights admins
+member: uid=john,ou=people,dc=example,dc=org

@@ -11,7 +11,7 @@ import (
 
 // loadRSAPublicKey reads an RSA public key in PKIX PEM format (what
 // `openssl rsa -pubout` produces, see spike/keys/README.md). The engine never
-// reads the proxy's private key (F80): only this file is mounted for it.
+// reads the proxy's private key: only this file is mounted for it.
 func loadRSAPublicKey(path string) (*rsa.PublicKey, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

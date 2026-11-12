@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# SP-05: run FROM, LOOKUP JOIN and ENRICH via the proxy (:9210), first with
+# Run FROM, LOOKUP JOIN and ENRICH via the proxy (:9210), first with
 # elastic (raw capability, no ACL), then with alice (LDAP path ->
-# proxy run_as, SP-03/SP-04), to answer F27 by execution rather
+# proxy run_as,), to answer by execution rather
 # than by docs alone:
 #   1. which ES|QL commands read other indexes in 8.19?
 #   2. does Elasticsearch's native ACL on the TARGET index (or policy) of a
 #      LOOKUP JOIN / ENRICH behave like FROM, or can a
 #      user read another team's data via a
-#      join/enrich despite an otherwise correct ACL (F27, F14)?
+#      join/enrich despite an otherwise correct ACL?
 #
-# Prerequisites: SP-01 to SP-04 stack started (`docker compose up -d`) and
+# Prerequisites: to stack started (`docker compose up -d`) and
 # ./scripts/esql-seed.sh already run.
 #
 # This script is intentionally NOT a pass/fail gate like verify.sh:
@@ -67,7 +67,7 @@ run_query() {
   printf '       body: %s\n' "${snippet}"
 }
 
-echo "== SP-05: elastic (superuser, no ACL -- raw command capability) =="
+echo "==: elastic (superuser, no ACL -- raw command capability) =="
 run_query elastic "${ELASTIC_PASSWORD}" control_row \
   'ROW a = 1' 200
 run_query elastic "${ELASTIC_PASSWORD}" from_basic \
@@ -88,7 +88,7 @@ run_query elastic "${ELASTIC_PASSWORD}" enrich_cross_team \
   'FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host | LIMIT 5' 200
 echo
 
-echo "== SP-05: alice (LDAP -> run_as via the proxy, equipe_a_viewer role, equipe-a-* pattern) =="
+echo "==: alice (LDAP -> run_as via the proxy, equipe_a_viewer role, equipe-a-* pattern) =="
 run_query alice "${ALICE_PASSWORD}" control_row \
   'ROW a = 1' 200
 run_query alice "${ALICE_PASSWORD}" from_basic \
@@ -109,13 +109,13 @@ run_query alice "${ALICE_PASSWORD}" enrich_cross_team \
   'FROM equipe-a-sp05-logs | ENRICH sp05-owners-b-policy ON host | LIMIT 5' open
 echo
 
-echo "Cases marked [OPEN FINDING] above = F27's real question:"
+echo "Cases marked [OPEN FINDING] above = real question:"
 echo "  - lookup_cross_team (alice): if the body contains \"equipe-b-secret\", alice read"
-echo "    another team's data via LOOKUP JOIN despite her ACL -- F27 MUST check"
+echo "    another team's data via LOOKUP JOIN despite her ACL -- MUST check"
 echo "    the TARGET index of a LOOKUP JOIN, not only the FROM."
 echo "  - enrich_cross_team (alice): if the body contains \"equipe-b-secret\", same finding"
 echo "    for ENRICH, worse: the ES|QL query never names the policy's source"
-echo "    index, so an F27 parser that only reads the text cannot see it."
+echo "    index, so an parser that only reads the text cannot see it."
 echo
 if [ "${SURPRISES}" -gt 0 ]; then
   echo "Warning: ${SURPRISES} case(s) expected to be refused actually succeeded (see [FINDING] above)."

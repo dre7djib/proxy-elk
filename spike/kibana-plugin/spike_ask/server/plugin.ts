@@ -8,12 +8,11 @@ import type {
 import type { SpikeAskConfig } from './config';
 import type { SpikeAskPluginSetup, SpikeAskPluginStart } from './types';
 import { registerAskRoute } from './routes/ask';
+import { registerUsersRoute } from './routes/users';
 
-// Minimal New Platform plugin (SP-06). Single role: expose a server
-// route that (1) requests a short-lived token from the proxy with the current
-// user's session (variant from step 6 of the spike plan), (2) relays
-// that token unmodified to a dummy engine (F80), (3) returns the
-// engine's verification result to the UI.
+// Minimal New Platform plugin. Routes:
+// (1) short-lived token → dummy engine (Ask page)
+// (2) create ES shadow user for an existing LDAP uid (Users page)
 export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPluginStart> {
   private readonly logger: Logger;
 
@@ -26,6 +25,10 @@ export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPlugi
     const router = core.http.createRouter();
 
     registerAskRoute(router, { engineUrl: config.engineUrl, logger: this.logger });
+    registerUsersRoute(router, {
+      shadowPassword: config.shadowPassword,
+      logger: this.logger,
+    });
 
     return {};
   }

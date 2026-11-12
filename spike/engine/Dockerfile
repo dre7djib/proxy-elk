@@ -1,4 +1,4 @@
-# Disposable dummy engine for the SP-06 spike. Same pattern as spike/proxy/Dockerfile:
+# Disposable dummy engine for the spike. Same pattern as spike/proxy/Dockerfile:
 # `go mod tidy` resolves and downloads dependencies at image
 # build time (no committed go.sum), acceptable for a disposable spike.
 FROM golang:1.23-alpine AS build

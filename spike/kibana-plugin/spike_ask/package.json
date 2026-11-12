@@ -2,7 +2,7 @@
   "name": "spike_ask",
   "version": "1.0.0",
   "private": true,
-  "description": "SP-06: minimal Kibana plugin, relays a short-lived token from the proxy to a dummy engine (F39-F41, F78-F82). Throwaway, not a product plugin.",
+  "description": "Minimal Kibana plugin: Ask (token→engine) and Users (ES shadow user for existing LDAP uid). Throwaway, not a product plugin.",
   "kibana": {
     "version": "kibana"
   },

@@ -1,0 +1,333 @@
+name: proxy-elk-demo
+
+# One-command demo derived from spike/docker-compose.yml.
+# spike/ stays unchanged; this compose reuses its build contexts
+# (kibana/engine) and its keys/LDIF through read-only volumes.
+#
+# A single proxy sits between Kibana and Elasticsearch: the
+# spike Track A gateway (build spike/proxy) was removed and replaced by the
+# product binary's run_as/_activate relay (internal/es). spike/ stays
+# unchanged; this demo simply no longer builds spike/proxy.
+
+services:
+  certs:
+    image: alpine:3.20
+    volumes:
+      - ./certs:/certs
+      - ./scripts/gen-certs.sh:/gen-certs.sh:ro
+    command: ["sh", "/gen-certs.sh"]
+
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    # Root: the image's default non-root user can't write to the
+    # essecrets volume (root:root, 755) otherwise.
+    user: "0:0"
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+      - PROXY_SERVICE_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      - NATIVE_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
+    volumes:
+      - ./scripts/es-bootstrap.sh:/usr/local/bin/es-bootstrap.sh:ro
+      # Shared with `proxy`: es-bootstrap.sh writes the resolver API key
+      # here — an ES-generated secret, never a static .env
+      # value, so elasticsearch.api_key uses ${file:} (configs/proxy.yaml).
+      - essecrets:/secrets
+    networks:
+      - es
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command: ["bash", "/usr/local/bin/es-bootstrap.sh"]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - node.name=es01
+      - cluster.name=proxy-elk-demo
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.license.self_generated.type=basic
+      - xpack.ml.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    mem_limit: 1g
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - es
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  engine:
+    build: ../../spike/engine
+    environment:
+      - JWT_PUBLIC_KEY_PATH=/keys/public.pem
+      - JWT_AUDIENCE=spike-engine
+      - JWT_CLOCK_SKEW=60s
+    volumes:
+      - ../../spike/keys/public.pem:/keys/public.pem:ro
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  kibana-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    volumes:
+      - ../../spike/scripts/kibana-bootstrap.sh:/usr/local/bin/kibana-bootstrap.sh:ro
+    # Talks to elasticsearch (es) and to kibana (demo).
+    networks:
+      - es
+      - demo
+    depends_on:
+      kibana:
+        condition: service_healthy
+    command: ["bash", "/usr/local/bin/kibana-bootstrap.sh"]
+
+  seed:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    volumes:
+      - ./scripts/seed.sh:/usr/local/bin/seed.sh:ro
+    networks:
+      - es
+    depends_on:
+      kibana-setup:
+        condition: service_completed_successfully
+    command: ["bash", "/usr/local/bin/seed.sh"]
+
+  kibana:
+    build:
+      context: ../../spike
+      dockerfile: kibana/Dockerfile
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+      proxy:
+        condition: service_healthy
+      engine:
+        condition: service_healthy
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=http://proxy:8080
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:5601:5601"
+    volumes:
+      - kibanadata:/usr/share/kibana/data
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '^(200|302)$'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  # OpenLDAP: spike LDIF mounted read-only (no copy). Demo TLS
+  # on 636: the product proxy connects there over LDAPS for
+  # /auth/ldap AND for the ES relay (run_as), one connection
+  # LDAP/LDAPS for both. Cleartext 389 stays published for a possible
+  # direct LDAP client, but the product does not use it.
+  openldap:
+    image: osixia/openldap:1.5.0
+    command: ["--copy-service"]
+    environment:
+      - LDAP_ORGANISATION=Spike Proxy ELK
+      - LDAP_DOMAIN=example.org
+      - LDAP_BASE_DN=dc=example,dc=org
+      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD}
+      - LDAP_CONFIG_PASSWORD=${LDAP_ADMIN_PASSWORD}
+      - LDAP_READONLY_USER=true
+      - LDAP_READONLY_USER_USERNAME=readonly
+      - LDAP_READONLY_USER_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - LDAP_REMOVE_CONFIG_AFTER_SETUP=true
+      - LDAP_TLS=true
+      - LDAP_TLS_CRT_FILENAME=server.crt
+      - LDAP_TLS_KEY_FILENAME=server.key
+      - LDAP_TLS_CA_CRT_FILENAME=ca.crt
+      - LDAP_TLS_ENFORCE=false
+      - LDAP_TLS_VERIFY_CLIENT=never
+    ports:
+      - "127.0.0.1:1389:389"
+      - "127.0.0.1:1636:636"
+    volumes:
+      - ../../spike/ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom:ro
+      - ./certs:/container/service/slapd/assets/certs:ro
+      - ldapdata:/var/lib/ldap
+      - ldapconfig:/etc/ldap/slapd.d
+    networks:
+      - demo
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "ldapwhoami -x -H ldap://localhost:389 -D 'cn=admin,dc=example,dc=org' -w \"$$LDAP_ADMIN_PASSWORD\" >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  # MIT KDC for Kerberos/SPNEGO SSO (plan kerberos_spnego_sso): realm
+  # EXAMPLE.ORG (same domain as the directory), principal alice (same
+  # password as the LDIF, so one kinit) and the proxy keytab generated
+  # at boot (entrypoint.sh), never committed. Two SPNs in the keytab:
+  # HTTP/proxy.demo.local (browser) and HTTP/proxy (krb5-user, Docker
+  # network). Port 88 published for a kinit from the host.
+  kdc:
+    build: ./kerberos
+    environment:
+      - REALM=EXAMPLE.ORG
+      - ALICE_PASSWORD=${ALICE_PASSWORD}
+    ports:
+      - "127.0.0.1:88:88/udp"
+      - "127.0.0.1:88:88/tcp"
+    volumes:
+      - kdcdata:/var/lib/krb5kdc
+      - krb5keytab:/keytab
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /keytab/krb5.keytab"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # krb5-user client + curl GSSAPI for verify.sh's SPNEGO smoke test:
+  # macOS GSS does not always honor KRB5_CONFIG, so this
+  # container runs kinit + curl --negotiate from the Docker network.
+  krb5-user:
+    build:
+      context: ./kerberos
+      dockerfile: client.Dockerfile
+    networks:
+      - demo
+    depends_on:
+      kdc:
+        condition: service_healthy
+
+  # Demo OIDC IdP (counterpart for interactive login): Keycloak,
+  # realm "demo" imported at startup (client "proxy", users alice/bob/
+  # carol with groups = the same CNs as the LDIF). KC_HOSTNAME_STRICT=false:
+  # the issuer follows the request Host, so it matches on the backend
+  # (always "keycloak:8080" via Docker DNS) and in the browser (if
+  # "127.0.0.1 keycloak" is added to /etc/hosts, see the README; otherwise
+  # only verify.sh's 302 smoke test works, not the interactive login).
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+      - KC_HTTP_ENABLED=true
+      - KC_HTTP_PORT=18080
+      - KC_HOSTNAME_STRICT=false
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "127.0.0.1:18080:18080"
+    networks:
+      - demo
+    healthcheck:
+      # Keycloak 24+ expose /health/ready on management port 9000. The
+      # image has no curl/wget — probe with bash /dev/tcp instead.
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000 && printf \"GET /health/ready HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Product image (root Dockerfile): /health /metrics /auth/*
+  # (OIDC Keycloak + LDAPS OpenLDAP) and the Elasticsearch
+  # relay (run_as, _activate) — the only Kibana -> Elasticsearch path
+  # in this demo.
+  proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      - ES_RUN_AS_PASSWORD=${PROXY_SERVICE_PASSWORD}
+      - ES_SHADOW_PASSWORD=${NATIVE_SHADOW_PASSWORD}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET}
+    volumes:
+      - ./configs/proxy.yaml:/etc/proxy/proxy.yaml:ro
+      - ./certs/ca.crt:/etc/proxy/certs/ca.crt:ro
+      # es-bootstrap.sh (service `setup`) writes the resolver API key here.
+      - essecrets:/secrets:ro
+      # kdc's entrypoint.sh writes the keytab here (kerberos_spnego_sso).
+      - krb5keytab:/etc/proxy/krb5:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+      openldap:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      kdc:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8081:8080"
+    # Only long-running service (apart from one-shots) on both networks: it must
+    # reach elasticsearch (es) and stay reachable by kibana (demo).
+    networks:
+      - es
+      - demo
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+networks:
+  # Internal (no route to the outside): only the product proxy
+  # (and the one-shots that exit after bootstrap) talks to
+  # elasticsearch. Kibana is not on it: the name "elasticsearch" does not
+  # resolve from Kibana.
+  es:
+    driver: bridge
+    internal: true
+  demo:
+    driver: bridge
+
+volumes:
+  esdata:
+  kibanadata:
+  ldapdata:
+  ldapconfig:
+  essecrets:
+  kdcdata:
+  krb5keytab:

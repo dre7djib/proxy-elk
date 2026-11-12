@@ -1,5 +1,5 @@
-# Disposable proxy for the SP-02/SP-03 spike. Minimal image.
-# `go mod tidy` resolves and downloads github.com/go-ldap/ldap/v3 (F4, SP-03) and
+# Disposable proxy for the spike. Minimal image.
+# `go mod tidy` resolves and downloads github.com/go-ldap/ldap/v3 and
 # writes go.sum at build time: no committed go.sum, requires network
 # access at `docker compose build` time (acceptable for a spike,
 # not byte-for-byte reproducible).

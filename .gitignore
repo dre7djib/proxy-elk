@@ -1,7 +1,12 @@
 # Local spike secrets (never commit) — copy spike/.env.example to spike/.env
 spike/.env
 
-docs/
+.cursor/
+
 
 # macOS
 .DS_Store
+
+dist/
+
+docs/

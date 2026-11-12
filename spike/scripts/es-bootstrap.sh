@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Elasticsearch bootstrap for SP-03/SP-04 (continues the SP-01 bootstrap).
+# Elasticsearch bootstrap for (continues the bootstrap).
 # Run once in the docker-compose `setup` service, once
 # Elasticsearch responds:
-#   1. set the kibana_system password (carried over from SP-01/SP-02);
+#   1. set the kibana_system password (carried over from);
 #   2. create the proxy_runas role (run_as alice, bob, carol) and the
 #      proxy_service service user, which the proxy uses to impersonate
-#      LDAP users (F2, F4, SP-03);
+#      LDAP users;
 #   3. create ES "stub" roles per team and level (equipe_a_viewer,
-#      equipe_a_editor, equipe_b_viewer, SP-04): this service exits before
+#      equipe_a_editor, equipe_b_viewer,): this service exits before
 #      Kibana is reachable (depends_on service_healthy on
 #      Elasticsearch only), so Kibana privileges (spaces, base read/all)
 #      cannot be set here. The role exists only so assigning it to the user
@@ -20,9 +20,10 @@
 #      exist in the directory. Elasticsearch has no LDAP realm here (paid
 #      feature): these accounts' LDAP password (the one the user types in
 #      Kibana) is validated by the proxy via search-then-bind, never
-#      by Elasticsearch.
+#      by Elasticsearch. Extra LDAP people (e.g. dave) are *not* created
+#      here: Spike Users (plugin UI) provisions their shadow user later.
 #
-# SP-03 runtime finding: their ES password CANNOT be random and discarded.
+# runtime finding: their ES password CANNOT be random and discarded.
 # Kibana calls POST /_security/profile/_activate right after
 # login (grant_type: "password", with the password typed by the user),
 # authenticated as kibana_system but verified by Elasticsearch itself
@@ -60,7 +61,7 @@ curl -sf -X PUT "${AUTH[@]}" \
   -d '{
     "cluster": [],
     "indices": [],
-    "run_as": ["alice", "bob", "carol"]
+    "run_as": ["alice", "bob", "carol", "john"]
   }' >/dev/null
 echo "OK"
 
@@ -71,7 +72,7 @@ curl -sf -X PUT "${AUTH[@]}" \
   -d "{
     \"password\": \"${PROXY_SERVICE_PASSWORD}\",
     \"roles\": [\"proxy_runas\"],
-    \"full_name\": \"Proxy service (run_as, SP-03)\"
+    \"full_name\": \"Proxy service (run_as)\"
   }" >/dev/null
 echo "OK"
 
@@ -91,7 +92,7 @@ create_native_user() {
 
 create_stub_role() {
   local role_name="$1"
-  echo "Stub role ${role_name} (completed later by kibana-bootstrap.sh, SP-04)..."
+  echo "Stub role ${role_name} (completed later by kibana-bootstrap.sh)..."
   curl -sf -X PUT "${AUTH[@]}" \
     -H "Content-Type: application/json" \
     "${ES_URL}/_security/role/${role_name}" \
@@ -102,8 +103,8 @@ create_stub_role() {
   echo "OK"
 }
 
-# Stub roles per team and level (SP-04): team A (viewer, editor) and
-# team B (viewer). Replaces the built-in viewer/editor roles from SP-03, which
+# Stub roles per team and level: team A (viewer, editor) and
+# team B (viewer). Replaces the built-in viewer/editor roles from, which
 # granted access to all Kibana spaces with no team isolation.
 # kibana-bootstrap.sh (run after Kibana, in the kibana-setup service)
 # completes these roles: team index + Kibana privileges (base read/all,
@@ -116,5 +117,6 @@ create_stub_role equipe_b_viewer
 create_native_user alice "Alice Martin" equipe_a_viewer
 create_native_user bob "Bob Durand" equipe_a_editor
 create_native_user carol "Carol Petit" equipe_b_viewer
+create_native_user john "John Admin" superuser
 
-echo "Elasticsearch bootstrap complete (SP-01 to SP-04)."
+echo "Elasticsearch bootstrap complete (to)."

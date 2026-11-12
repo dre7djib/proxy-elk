@@ -1,9 +1,9 @@
 import type { CoreSetup, CoreStart, Plugin } from '@kbn/core/public';
 import type { SpikeAskPluginSetup, SpikeAskPluginStart } from './types';
 
-// Minimal "Spike Ask" application (F39, reduced to the essentials for SP-06):
-// a menu item, a page, a button. No natural-language question,
-// no Discover link (F28, F41 = J2-05/J2-06, out of scope).
+// Minimal applications for the spike:
+// - Spike Ask: short-lived token → dummy engine
+// - Spike Users: create ES shadow user for an existing LDAP uid
 export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPluginStart> {
   public setup(core: CoreSetup): SpikeAskPluginSetup {
     core.application.register({
@@ -12,6 +12,15 @@ export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPlugi
       async mount(params) {
         const { renderApp } = await import('./application');
         return renderApp(core, params);
+      },
+    });
+
+    core.application.register({
+      id: 'spikeUsers',
+      title: 'Spike Users',
+      async mount(params) {
+        const { renderUsersApp } = await import('./users_application');
+        return renderUsersApp(core, params);
       },
     });
 

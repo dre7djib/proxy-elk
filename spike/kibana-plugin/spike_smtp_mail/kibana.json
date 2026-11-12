@@ -1,0 +1,13 @@
+{
+  "id": "spikeSmtpMail",
+  "version": "1.0.0",
+  "kibanaVersion": "kibana",
+  "configPath": ["spikeSmtpMail"],
+  "server": true,
+  "ui": true,
+  "requiredPlugins": ["alerting", "features", "triggersActionsUi"],
+  "optionalPlugins": [],
+  "owner": {
+    "name": "Spike Proxy ELK"
+  }
+}
