@@ -52,16 +52,18 @@ ldap:
 # Groups = the same CNs as the spike LDIF (spike/ldap/01-bootstrap.ldif) and the
 # Keycloak realm (keycloak/realm-export.json): one ACL for both
 # identity providers in this demo.
-acl:
-  rules:
-    - name: equipe-a-read
-      groups: [equipe-a-viewer, equipe-a-editor]
-      indices: [equipe-a-*]
-      actions: [read]
-    - name: equipe-b-read
-      groups: [equipe-b-viewer]
-      indices: [equipe-b-*]
-      actions: [read]
+teams:
+  - name: equipe-a
+    space: equipe-a
+    indices: [equipe-a-*]
+    levels:
+      viewer: [equipe-a-viewer]
+      editor: [equipe-a-editor]
+  - name: equipe-b
+    space: equipe-b
+    indices: [equipe-b-*]
+    levels:
+      viewer: [equipe-b-viewer]
 
 # Per-role limits: viewer groups are tighter than editor
 # groups, for the demo.

@@ -10,6 +10,7 @@ import (
 
 	"proxy/internal/acl"
 	"proxy/internal/limits"
+	"proxy/internal/teams"
 )
 
 // Load reads path, resolves ${env:NAME} and ${file:PATH} references, and
@@ -169,8 +170,14 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 	}
 
+	tc, err := teams.Parse(c.Teams)
+	if err != nil {
+		return err
+	}
+	// Team rules come first; they are merged into the effective ACL.
+	c.ACL.Rules = append(tc.Rules(), c.ACL.Rules...)
 	if len(c.ACL.Rules) == 0 {
-		return fmt.Errorf("acl.rules must not be empty")
+		return fmt.Errorf("acl.rules must not be empty (or define teams)")
 	}
 	if _, err := acl.Parse(c.ACL.Rules, c.ACL.KnownGroups, c.ACL.SystemIndices); err != nil {
 		return err

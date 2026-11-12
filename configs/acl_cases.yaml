@@ -8,13 +8,13 @@ cases:
     groups: [equipe-a-viewer]
     index: equipe-a-logs
     action: read
-    allow: equipe-a-read
+    allow: team:equipe-a
 
   - name: equipe-a-editor reads the shared reference index
     groups: [equipe-a-editor]
     index: shared-ref
     action: read
-    allow: equipe-a-read
+    allow: shared-ref-read
 
   - name: alice reads her own scratch index
     subject: alice

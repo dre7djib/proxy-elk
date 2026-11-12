@@ -4,6 +4,7 @@ package config
 import (
 	"proxy/internal/acl"
 	"proxy/internal/limits"
+	"proxy/internal/teams"
 )
 
 // Config is the process configuration. Secret fields hold resolved values.
@@ -14,6 +15,7 @@ type Config struct {
 	LDAP          LDAP          `yaml:"ldap" json:"ldap"`
 	JWT           JWT           `yaml:"jwt" json:"jwt"`
 	ACL           ACL           `yaml:"acl" json:"acl"`
+	Teams         []teams.Team  `yaml:"teams" json:"teams"`
 	Limits        Limits        `yaml:"limits" json:"limits"`
 	Session       Session       `yaml:"session" json:"session"`
 	Kibana        Kibana        `yaml:"kibana" json:"kibana"`

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"proxy/internal/acl"
+	"proxy/internal/auth"
 	"strings"
 	"testing"
 )
@@ -1178,5 +1180,68 @@ func TestExampleConfig(t *testing.T) {
 	}
 	if strings.Contains(cfg.Mask(secret), secret) {
 		t.Fatal("mask leaked example secret")
+	}
+}
+
+func teamsConfig(t *testing.T, tail string) string {
+	t.Helper()
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
+	return writeConfig(t, `
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+`+tail)
+}
+
+func TestLoadTeams(t *testing.T) {
+	cfg, _, err := Load(teamsConfig(t, `
+teams:
+  - name: equipe-a
+    space: equipe-a
+    indices: [equipe-a-*]
+    levels:
+      viewer: [equipe-a-viewer]
+      editor: [equipe-a-editor]
+  - name: equipe-b
+    space: equipe-b
+    indices: [equipe-b-*]
+    levels:
+      viewer: [equipe-b-viewer]
+`))
+	if err != nil {
+		t.Fatalf("teams-only config must load: %v", err)
+	}
+	p, err := acl.Parse(cfg.ACL.Rules, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := auth.Identity{Subject: "u", Groups: []string{"equipe-a-editor"}}
+	if err := p.Decide(a, acl.DecideContext{}, []string{"equipe-a-logs"}, acl.ActionRead); err != nil {
+		t.Fatalf("own team index: %v", err)
+	}
+	if err := p.Decide(a, acl.DecideContext{}, []string{"equipe-b-logs"}, acl.ActionRead); err == nil {
+		t.Fatal("other team index must be denied")
+	}
+	out := auth.Identity{Subject: "u", Groups: []string{"stranger"}}
+	if err := p.Decide(out, acl.DecideContext{}, []string{"equipe-a-logs"}, acl.ActionRead); err == nil {
+		t.Fatal("unmapped group must be denied")
+	}
+}
+
+func TestLoadTeamsInvalid(t *testing.T) {
+	_, _, err := Load(teamsConfig(t, `
+teams:
+  - name: a
+    space: a
+    indices: [".security*"]
+    levels: {viewer: [g]}
+`+minimalACL))
+	if err == nil {
+		t.Fatal("invalid teams must refuse to load")
 	}
 }
