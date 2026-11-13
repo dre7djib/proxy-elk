@@ -20,6 +20,7 @@ import (
 	"proxy/internal/auth"
 	"proxy/internal/config"
 	"proxy/internal/es"
+	"proxy/internal/idtoken"
 	"proxy/internal/limits"
 	"proxy/internal/proxy"
 	teamsync "proxy/internal/sync"
@@ -443,7 +444,24 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 	for _, u := range cfg.Elasticsearch.PassthroughUsers {
 		passthrough[u] = true
 	}
+	var idIssuer *idtoken.Issuer
+	if len(cfg.IdentityToken.Keys) > 0 {
+		var err error
+		if idIssuer, err = newIdentityIssuer(cfg.IdentityToken); err != nil {
+			return nil, fmt.Errorf("identity_token: %w", err)
+		}
+		mux.HandleFunc("GET /identity/jwks", func(w http.ResponseWriter, r *http.Request) {
+			jwks, err := idIssuer.JWKS()
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(jwks)
+		})
+	}
 	mux.Handle("/", es.NewRelay(es.Config{
+		IdentityTokens: idIssuer,
 		Target:         target,
 		LDAP:           directory,
 		Sessions:       sessions,
@@ -474,4 +492,20 @@ func sessionOnSuccess(sessions *auth.Sessions, method auth.Method) func(http.Res
 		}
 		http.Redirect(w, r, "/auth/me", http.StatusFound)
 	}
+}
+
+func newIdentityIssuer(c config.IdentityToken) (*idtoken.Issuer, error) {
+	ttl, err := time.ParseDuration(c.TTL)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]idtoken.Key, len(c.Keys))
+	for i, k := range c.Keys {
+		priv, err := idtoken.ParsePrivateKey(k.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		keys[i] = idtoken.Key{KID: k.KID, Private: priv}
+	}
+	return idtoken.NewIssuer(c.Issuer, c.Audience, ttl, keys)
 }

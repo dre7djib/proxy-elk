@@ -20,6 +20,7 @@ type Config struct {
 	Session       Session       `yaml:"session" json:"session"`
 	Kibana        Kibana        `yaml:"kibana" json:"kibana"`
 	Kerberos      Kerberos      `yaml:"kerberos" json:"kerberos"`
+	IdentityToken IdentityToken `yaml:"identity_token" json:"identity_token"`
 
 	secrets secretSet
 }
@@ -152,6 +153,23 @@ type JWT struct {
 	JWKSURL  string `yaml:"jwks_url" json:"jwks_url"`
 	// GroupsClaim is the token claim holding the caller's groups. Defaults to "groups".
 	GroupsClaim string `yaml:"groups_claim" json:"groups_claim"`
+}
+
+// IdentityToken enables the short identity JWT the proxy signs for Kibana
+// (POST /_proxy/identity-token, GET /identity/jwks). Empty Keys disables
+// it. One or two RS256 private keys: the first signs, both verify
+// (rotation). TTL is a Go duration within 5m–15m, default 10m.
+type IdentityToken struct {
+	Issuer   string        `yaml:"issuer" json:"issuer"`
+	Audience string        `yaml:"audience" json:"audience"`
+	TTL      string        `yaml:"ttl" json:"ttl"`
+	Keys     []IdentityKey `yaml:"keys" json:"keys"`
+}
+
+// IdentityKey is one signing key; PrivateKey must be a secret reference to a PEM.
+type IdentityKey struct {
+	KID        string `yaml:"kid" json:"kid"`
+	PrivateKey string `yaml:"private_key" json:"private_key"`
 }
 
 // Session configures the HMAC-signed login session shared by OIDC and

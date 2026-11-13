@@ -169,3 +169,17 @@ session:
 #   keytab_file: /etc/proxy/krb5.keytab
 #   service_principal: HTTP/proxy.demo.local@EXAMPLE.ORG
 #   realm: EXAMPLE.ORG
+
+# Optional short identity JWT (RS256) the proxy signs for Kibana: Kibana
+# calls POST /_proxy/identity-token; public keys at GET /identity/jwks.
+# ttl 5m–15m (default 10m). One or two PEM private keys: the first signs,
+# both verify. Rotate: add the new key first, drop the old one after ttl.
+# identity_token:
+#   issuer: proxy
+#   audience: engine
+#   ttl: 10m
+#   keys:
+#     - kid: current
+#       private_key: "${file:/etc/proxy/idtoken-current.pem}"
+#     - kid: previous
+#       private_key: "${file:/etc/proxy/idtoken-previous.pem}"

@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"proxy/internal/acl"
+	"proxy/internal/idtoken"
 	"proxy/internal/limits"
 	"proxy/internal/teams"
 )
@@ -152,6 +153,34 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 		if c.JWT.JWKSURL == "" {
 			return fmt.Errorf("jwt.jwks_url is required when jwt.issuer is set")
+		}
+	}
+
+	if len(c.IdentityToken.Keys) > 0 || c.IdentityToken.Issuer != "" {
+		it := &c.IdentityToken
+		if len(it.Keys) < 1 || len(it.Keys) > 2 {
+			return fmt.Errorf("identity_token.keys must hold 1 or 2 keys")
+		}
+		if it.Issuer == "" || it.Audience == "" {
+			return fmt.Errorf("identity_token.issuer and identity_token.audience are required")
+		}
+		if it.TTL == "" {
+			it.TTL = "10m"
+		}
+		if d, err := time.ParseDuration(it.TTL); err != nil || d < idtoken.MinTTL || d > idtoken.MaxTTL {
+			return fmt.Errorf("identity_token.ttl must be a Go duration between 5m and 15m")
+		}
+		for i, k := range it.Keys {
+			path := fmt.Sprintf("identity_token.keys[%d]", i)
+			if k.KID == "" {
+				return fmt.Errorf("%s.kid is required", path)
+			}
+			if _, ok := secrets.paths[path+".private_key"]; !ok || k.PrivateKey == "" {
+				return fmt.Errorf("%s.private_key must be ${env:NAME} or ${file:PATH}", path)
+			}
+			if _, err := idtoken.ParsePrivateKey(k.PrivateKey); err != nil {
+				return fmt.Errorf("%s.private_key: %w", path, err)
+			}
 		}
 	}
 

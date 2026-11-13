@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httputil"
@@ -13,6 +14,7 @@ import (
 
 	"proxy/internal/acl"
 	"proxy/internal/auth"
+	"proxy/internal/idtoken"
 	"proxy/internal/limits"
 )
 
@@ -68,6 +70,11 @@ type Config struct {
 	// through the ACL (kibana_system).
 	Passthrough map[string]bool
 
+	// IdentityTokens, when non-nil, answers POST /_proxy/identity-token
+	// in place (never proxied, never through the ACL). Nil: the path goes
+	// to Elasticsearch like any other.
+	IdentityTokens *idtoken.Issuer
+
 	// BindCacheTTL caches a successful LDAP bind this long. Defaults to 1m.
 	BindCacheTTL time.Duration
 }
@@ -96,6 +103,10 @@ func (rl *relay) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if rl.cfg.Passthrough[user] {
+			if rl.isTokenRoute(r) {
+				identityTokenError(w, http.StatusForbidden, "service accounts get no identity token")
+				return
+			}
 			if r.Method == http.MethodPost && r.URL.Path == "/_security/profile/_activate" {
 				rl.activate(w, r)
 				return
@@ -143,6 +154,10 @@ func (rl *relay) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if rl.cfg.Kerberos != nil {
 		w.Header().Set("WWW-Authenticate", "Negotiate")
 	}
+	if rl.isTokenRoute(r) {
+		identityTokenError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
 	http.Error(w, "authentication required", http.StatusUnauthorized)
 }
 
@@ -169,6 +184,10 @@ const selfAuthenticatePath = "/_security/_authenticate"
 const selfPrivilegesPath = "/_security/user/_has_privileges"
 
 func (rl *relay) decideAndForward(w http.ResponseWriter, r *http.Request, id auth.Identity) {
+	if rl.isTokenRoute(r) {
+		rl.identityToken(w, id)
+		return
+	}
 	if r.URL.Path == selfAuthenticatePath && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		r.Header.Set("Authorization", basicAuthHeader(rl.cfg.RunAsUser, rl.cfg.RunAsPassword))
 		r.Header.Set("es-security-runas-user", id.Subject)
@@ -236,4 +255,29 @@ func decodeBasicAuth(header string) (user, password string, ok bool) {
 
 func basicAuthHeader(user, password string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+password))
+}
+
+// IdentityTokenPath is where Kibana (asCurrentUser) asks for its caller's token.
+const IdentityTokenPath = "/_proxy/identity-token"
+
+func (rl *relay) isTokenRoute(r *http.Request) bool {
+	return rl.cfg.IdentityTokens != nil && r.Method == http.MethodPost && r.URL.Path == IdentityTokenPath
+}
+
+func (rl *relay) identityToken(w http.ResponseWriter, id auth.Identity) {
+	tok, err := rl.cfg.IdentityTokens.Sign(id.Subject, id.Groups)
+	if err != nil {
+		identityTokenError(w, http.StatusInternalServerError, "token signing failed")
+		return
+	}
+	w.Header().Set("X-elastic-product", "Elasticsearch")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": tok})
+}
+
+// identityTokenError carries X-elastic-product, else the plugin's
+// Elasticsearch client rejects the body (SP-06).
+func identityTokenError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("X-elastic-product", "Elasticsearch")
+	http.Error(w, msg, code)
 }

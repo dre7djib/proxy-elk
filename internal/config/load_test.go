@@ -1,7 +1,11 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"proxy/internal/acl"
@@ -1243,5 +1247,45 @@ teams:
 `+minimalACL))
 	if err == nil {
 		t.Fatal("invalid teams must refuse to load")
+	}
+}
+
+func TestLoadIdentityToken(t *testing.T) {
+	t.Setenv("ES_API_KEY", "x")
+	t.Setenv("ES_RUN_AS_PASSWORD", "x")
+	t.Setenv("ES_SHADOW_PASSWORD", "x")
+	k, _ := rsa.GenerateKey(rand.Reader, 2048)
+	t.Setenv("IDT_KEY", string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)})))
+	base := `
+elasticsearch:
+  url: https://elasticsearch:9200
+  api_key: "${env:ES_API_KEY}"
+  run_as_user: proxy_service
+  run_as_password: "${env:ES_RUN_AS_PASSWORD}"
+  shadow_password: "${env:ES_SHADOW_PASSWORD}"
+` + minimalACL
+	good := base + `
+identity_token:
+  issuer: proxy
+  audience: engine
+  keys:
+    - {kid: current, private_key: "${env:IDT_KEY}"}
+`
+	cfg, _, err := Load(writeConfig(t, good))
+	if err != nil || cfg.IdentityToken.TTL != "10m" {
+		t.Fatalf("good: %v", err)
+	}
+	if strings.Contains(cfg.Redacted().IdentityToken.Keys[0].PrivateKey, "PRIVATE") {
+		t.Fatal("private key not redacted")
+	}
+	for name, body := range map[string]string{
+		"plaintext key": strings.Replace(good, "${env:IDT_KEY}", "nope", 1),
+		"ttl too long":  strings.Replace(good, "  audience: engine", "  audience: engine\n  ttl: 1h", 1),
+		"ttl too short": strings.Replace(good, "  audience: engine", "  audience: engine\n  ttl: 1m", 1),
+		"no keys":       base + "\nidentity_token:\n  issuer: proxy\n  audience: engine\n",
+	} {
+		if _, _, err := Load(writeConfig(t, body)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

@@ -2,6 +2,8 @@ package es
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,8 +11,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"proxy/internal/idtoken"
 	"strings"
 	"testing"
+	"time"
 
 	"proxy/internal/acl"
 	"proxy/internal/auth"
@@ -466,5 +470,62 @@ func TestRelayBulkWriteFromUserDenied(t *testing.T) {
 	}
 	if *called {
 		t.Fatal("upstream was called")
+	}
+}
+
+func TestRelayIdentityToken(t *testing.T) {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := idtoken.NewIssuer("proxy", "engine", 10*time.Minute, []idtoken.Key{{KID: "k", Private: k}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, _ := issuer.JWKS()
+	verifier, _ := idtoken.NewVerifier("proxy", "engine", 0, jwks)
+
+	upstream := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { upstream = true }))
+	t.Cleanup(srv.Close)
+	target, _ := url.Parse(srv.URL)
+	policy := testPolicy(t)
+	relay := NewRelay(Config{
+		Target: target,
+		LDAP: &fakeDirectory{authenticate: func(u, p string) (*auth.Identity, error) {
+			return &auth.Identity{Subject: u, Groups: []string{"equipe-a-viewer"}}, nil
+		}},
+		Policy: func() *acl.Policy { return policy }, Resolver: echoResolver{},
+		RunAsUser: "svc", RunAsPassword: "x", Passthrough: map[string]bool{"elastic": true},
+		IdentityTokens: issuer,
+	})
+	call := func(authz string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, IdentityTokenPath, nil)
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
+		}
+		rec := httptest.NewRecorder()
+		relay.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := call(basicHeader("alice", "pw"))
+	var body struct{ Token string }
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	c, err := verifier.Verify(body.Token)
+	if rec.Code != 200 || err != nil || c.Subject != "alice" || c.Groups[0] != "equipe-a-viewer" {
+		t.Fatalf("user: code=%d err=%v body=%s", rec.Code, err, rec.Body)
+	}
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"elastic":   call(basicHeader("elastic", "pw")),
+		"anonymous": call(""),
+	} {
+		want := map[string]int{"elastic": 403, "anonymous": 401}[name]
+		if rec.Code != want || rec.Header().Get("X-elastic-product") != "Elasticsearch" {
+			t.Fatalf("%s: code=%d header=%q", name, rec.Code, rec.Header().Get("X-elastic-product"))
+		}
+	}
+	if upstream {
+		t.Fatal("identity-token request was proxied")
 	}
 }
