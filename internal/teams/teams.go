@@ -181,3 +181,71 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// IndexPrivilege is one Elasticsearch index grant of a Kibana role body.
+type IndexPrivilege struct {
+	Names      []string `json:"names"`
+	Privileges []string `json:"privileges"`
+}
+
+// KibanaGrant is one Kibana privilege block of a role body.
+type KibanaGrant struct {
+	Base    []string       `json:"base"`
+	Feature map[string]any `json:"feature"`
+	Spaces  []string       `json:"spaces"`
+}
+
+// RoleBody is the body of PUT /api/security/role/<name>, limited to the
+// fields the proxy owns.
+type RoleBody struct {
+	Elasticsearch struct {
+		Cluster []string         `json:"cluster"`
+		Indices []IndexPrivilege `json:"indices"`
+	} `json:"elasticsearch"`
+	Kibana []KibanaGrant `json:"kibana"`
+}
+
+// Role is a desired Kibana role.
+type Role struct {
+	Name string
+	Body RoleBody
+}
+
+// Space is a desired Kibana space.
+type Space struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Roles returns one role per declared level. The index grant is capped at
+// read + view_index_metadata on the team's indices: never above the ACL.
+func (c *Config) Roles() []Role {
+	var out []Role
+	for _, t := range c.teams {
+		for _, l := range levelOrder {
+			if _, ok := t.Levels[string(l)]; !ok {
+				continue
+			}
+			var b RoleBody
+			b.Elasticsearch.Cluster = []string{}
+			b.Elasticsearch.Indices = []IndexPrivilege{{
+				Names:      append([]string(nil), t.Indices...),
+				Privileges: []string{"read", "view_index_metadata"},
+			}}
+			b.Kibana = []KibanaGrant{{
+				Base: []string{KibanaBase(l)}, Feature: map[string]any{}, Spaces: []string{t.Space},
+			}}
+			out = append(out, Role{Name: RoleName(t.Name, l), Body: b})
+		}
+	}
+	return out
+}
+
+// Spaces returns one space per team.
+func (c *Config) Spaces() []Space {
+	out := make([]Space, 0, len(c.teams))
+	for _, t := range c.teams {
+		out = append(out, Space{ID: t.Space, Name: t.Name})
+	}
+	return out
+}

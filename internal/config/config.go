@@ -75,6 +75,10 @@ type Elasticsearch struct {
 type Kibana struct {
 	URL       string `yaml:"url" json:"url"`
 	PublicURL string `yaml:"public_url" json:"public_url"`
+	// SyncUser/SyncPassword are the Kibana account `proxy -sync` writes
+	// spaces and roles with. Optional; SyncPassword must be a secret reference.
+	SyncUser     string `yaml:"sync_user" json:"sync_user"`
+	SyncPassword string `yaml:"sync_password" json:"sync_password"`
 }
 
 // Kerberos enables SPNEGO/Negotiate login in place of the /auth/kibana

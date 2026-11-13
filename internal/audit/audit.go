@@ -24,6 +24,8 @@ type Source string
 const (
 	SourceUI  Source = "ui"
 	SourceMCP Source = "mcp"
+	// SourceSync marks a write made by `proxy -sync`.
+	SourceSync Source = "sync"
 )
 
 // Decision is whether the request was allowed or denied.

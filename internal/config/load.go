@@ -170,6 +170,15 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 	}
 
+	if c.Kibana.SyncUser != "" || c.Kibana.SyncPassword != "" {
+		if c.Kibana.SyncUser == "" {
+			return fmt.Errorf("kibana.sync_user is required when kibana.sync_password is set")
+		}
+		if _, ok := secrets.paths["kibana.sync_password"]; !ok || c.Kibana.SyncPassword == "" {
+			return fmt.Errorf("kibana.sync_password must be ${env:NAME} or ${file:PATH}")
+		}
+	}
+
 	tc, err := teams.Parse(c.Teams)
 	if err != nil {
 		return err

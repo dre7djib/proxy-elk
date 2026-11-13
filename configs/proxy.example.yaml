@@ -148,6 +148,14 @@ session:
 # kibana:
 #   url: http://kibana:5601
 #   public_url: http://127.0.0.1:5601
+#   # `proxy -sync` writes one Kibana space per team and one role per level
+#   # (read + view_index_metadata on the team's indices, never more) via
+#   # /api/spaces/space and /api/security/role. It compares first: a second
+#   # run writes nothing, a hand-edited role is logged to the audit then
+#   # reset. `proxy -sync -dry-run` prints the differences, writes nothing.
+#   # Needs url, sync_user and sync_password (a secret reference).
+#   sync_user: elastic
+#   sync_password: "${env:KIBANA_SYNC_PASSWORD}"
 
 # Optional SPNEGO/Kerberos login, on top of LDAP/OIDC: when set, GET
 # /auth/kibana stops rendering the form and becomes the Negotiate

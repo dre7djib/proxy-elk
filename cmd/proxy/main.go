@@ -22,6 +22,8 @@ import (
 	"proxy/internal/es"
 	"proxy/internal/limits"
 	"proxy/internal/proxy"
+	teamsync "proxy/internal/sync"
+	"proxy/internal/teams"
 )
 
 // version is set at build time: -ldflags "-X main.version=1.2.3".
@@ -35,6 +37,14 @@ func main() {
 
 	if flags.version {
 		fmt.Println(version)
+		return
+	}
+
+	if flags.sync {
+		if err := runSync(flags, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy: %s\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -81,6 +91,8 @@ func main() {
 type cliFlags struct {
 	configPath string
 	simulate   bool
+	sync       bool
+	dryRun     bool
 	version    bool
 	subject    string
 	groups     string
@@ -97,6 +109,8 @@ func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
 	var f cliFlags
 	fs.StringVar(&f.configPath, "config", "./configs/proxy.yaml", "config file")
 	fs.BoolVar(&f.simulate, "simulate", false, "simulate an ACL decision instead of starting the server")
+	fs.BoolVar(&f.sync, "sync", false, "push teams to Kibana (spaces and roles), then exit")
+	fs.BoolVar(&f.dryRun, "dry-run", false, "with -sync: print the differences, write nothing")
 	fs.BoolVar(&f.version, "version", false, "print the version and exit")
 	fs.StringVar(&f.subject, "subject", "", "simulate: caller subject")
 	fs.StringVar(&f.groups, "groups", "", "simulate: comma-separated caller groups")
@@ -107,6 +121,14 @@ func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
 	fs.StringVar(&f.time, "time", "", "simulate: RFC3339 timestamp, optional (defaults to now)")
 	if err := fs.Parse(args); err != nil {
 		return cliFlags{}, err
+	}
+	if f.dryRun && !f.sync {
+		fmt.Fprintln(stderr, "-dry-run requires -sync")
+		return cliFlags{}, fmt.Errorf("-dry-run requires -sync")
+	}
+	if f.sync && f.simulate {
+		fmt.Fprintln(stderr, "-sync and -simulate are mutually exclusive")
+		return cliFlags{}, fmt.Errorf("-sync and -simulate are mutually exclusive")
 	}
 	return f, nil
 }
@@ -147,6 +169,48 @@ func runSimulate(f cliFlags, stdout, stderr io.Writer) error {
 		return nil
 	}
 	fmt.Fprintf(stdout, "allow %s\n", name)
+	return nil
+}
+
+// runSync pushes the teams section to Kibana. With -dry-run it only
+// prints the planned writes. It never starts listening.
+func runSync(f cliFlags, stdout, stderr io.Writer) error {
+	cfg, _, err := config.Load(f.configPath)
+	if err != nil {
+		return err
+	}
+	if cfg.Kibana.URL == "" || cfg.Kibana.SyncUser == "" || cfg.Kibana.SyncPassword == "" {
+		return fmt.Errorf("-sync requires kibana.url, kibana.sync_user and kibana.sync_password")
+	}
+	tc, err := teams.Parse(cfg.Teams)
+	if err != nil {
+		return err
+	}
+	s := &teamsync.Syncer{
+		BaseURL: cfg.Kibana.URL, User: cfg.Kibana.SyncUser, Password: cfg.Kibana.SyncPassword,
+		Client: &http.Client{Timeout: 30 * time.Second}, Teams: tc,
+		Audit: audit.New(stderr, cfg.Mask),
+	}
+	ctx := context.Background()
+	if f.dryRun {
+		plan, err := s.Plan(ctx)
+		if err != nil {
+			return err
+		}
+		for _, a := range plan {
+			fmt.Fprintln(stdout, a)
+		}
+		fmt.Fprintf(stdout, "%d change(s) planned, nothing written\n", len(plan))
+		return nil
+	}
+	plan, err := s.Apply(ctx)
+	for _, a := range plan {
+		fmt.Fprintln(stdout, a)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%d change(s) applied\n", len(plan))
 	return nil
 }
 

@@ -63,3 +63,25 @@ func TestParseRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestRolesCapped(t *testing.T) {
+	c, _ := Parse(two())
+	roles := c.Roles()
+	if len(roles) != 3 {
+		t.Fatalf("roles: %d", len(roles))
+	}
+	for _, r := range roles {
+		ix := r.Body.Elasticsearch.Indices
+		if len(r.Body.Elasticsearch.Cluster) != 0 || len(ix) != 1 ||
+			!reflect.DeepEqual(ix[0].Privileges, []string{"read", "view_index_metadata"}) {
+			t.Fatalf("%s: not capped: %+v", r.Name, r.Body)
+		}
+	}
+	if roles[0].Name != "a_viewer" || roles[0].Body.Kibana[0].Base[0] != "read" ||
+		roles[1].Body.Kibana[0].Base[0] != "all" || roles[2].Body.Kibana[0].Spaces[0] != "b" {
+		t.Fatalf("roles: %+v", roles)
+	}
+	if s := c.Spaces(); len(s) != 2 || s[0].ID != "a" || s[0].Name != "a" {
+		t.Fatalf("spaces: %v", s)
+	}
+}
