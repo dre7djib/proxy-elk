@@ -216,6 +216,8 @@ services:
       # the `engine` service below on the `spike` network.
       # Shadow password for Spike Users (POST /api/spike_ask/users): same
       # secret as NATIVE_SHADOW_PASSWORD / es-bootstrap native users.
+      # Spike proxy still serves the token on the old path; prod default is /_proxy/identity-token.
+      - SPIKEASK_TOKENPATH=/_spike/identity-token
       - SPIKEASK_SHADOWPASSWORD=${NATIVE_SHADOW_PASSWORD}
     mem_limit: 1g
     ports:

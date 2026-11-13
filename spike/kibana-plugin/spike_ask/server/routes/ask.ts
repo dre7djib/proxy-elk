@@ -3,6 +3,7 @@ import { schema } from '@kbn/config-schema';
 
 interface AskRouteDeps {
   engineUrl: string;
+  tokenPath: string;
   logger: Logger;
 }
 
@@ -50,11 +51,11 @@ export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
       try {
         const tokenResponse = (await esClient.transport.request({
           method: 'POST',
-          path: '/_spike/identity-token',
+          path: deps.tokenPath,
         })) as IdentityTokenResponse;
 
         if (!tokenResponse?.token) {
-          deps.logger.warn('proxy response missing token field on /_spike/identity-token');
+          deps.logger.warn(`proxy response missing token field on ${deps.tokenPath}`);
           return response.customError({
             statusCode: 502,
             body: { message: 'proxy did not return a token' },
@@ -82,7 +83,7 @@ export function registerAskRoute(router: IRouter, deps: AskRouteDeps): void {
 
         return response.ok({ body: engineBody });
       } catch (err) {
-        deps.logger.error(`/_spike/identity-token or engine call failed: ${err}`);
+        deps.logger.error(`${deps.tokenPath} or engine call failed: ${err}`);
         return response.customError({
           statusCode: 502,
           body: { message: 'token-via-Elasticsearch variant failed', detail: `${err}` },

@@ -5,7 +5,7 @@
   "configPath": ["spikeAsk"],
   "server": true,
   "ui": true,
-  "requiredPlugins": [],
+  "requiredPlugins": ["discover"],
   "optionalPlugins": [],
   "owner": {
     "name": "Spike Proxy ELK"

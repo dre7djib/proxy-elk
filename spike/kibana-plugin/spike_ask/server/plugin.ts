@@ -24,7 +24,7 @@ export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPlugi
     const config = this.initializerContext.config.get<SpikeAskConfig>();
     const router = core.http.createRouter();
 
-    registerAskRoute(router, { engineUrl: config.engineUrl, logger: this.logger });
+    registerAskRoute(router, { engineUrl: config.engineUrl, tokenPath: config.tokenPath, logger: this.logger });
     registerUsersRoute(router, {
       shadowPassword: config.shadowPassword,
       logger: this.logger,
