@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"proxy/internal/acl"
+	"proxy/internal/ask"
 	"proxy/internal/audit"
 	"proxy/internal/auth"
 	"proxy/internal/config"
@@ -460,7 +461,13 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 			w.Write(jwks)
 		})
 	}
+	resolver := acl.NewESResolver(cfg.Elasticsearch.URL, cfg.Elasticsearch.APIKey)
 	mux.Handle("/", es.NewRelay(es.Config{
+		Ask: &ask.Handler{
+			Target: target, Policy: policy, Resolver: resolver,
+			RunAsUser: cfg.Elasticsearch.RunAsUser, RunAsPassword: cfg.Elasticsearch.RunAsPassword,
+			ModelURL: cfg.Model.URL, ModelKey: cfg.Model.APIKey, ModelName: cfg.Model.Name,
+		},
 		IdentityTokens: idIssuer,
 		Target:         target,
 		LDAP:           directory,
@@ -470,7 +477,7 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 		Limits:         limiter,
 		Counter:        counter,
 		Policy:         policy,
-		Resolver:       acl.NewESResolver(cfg.Elasticsearch.URL, cfg.Elasticsearch.APIKey),
+		Resolver:       resolver,
 		RunAsUser:      cfg.Elasticsearch.RunAsUser,
 		RunAsPassword:  cfg.Elasticsearch.RunAsPassword,
 		ShadowPassword: cfg.Elasticsearch.ShadowPassword,

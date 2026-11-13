@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"proxy/internal/acl"
+	"proxy/internal/ask"
 	"proxy/internal/auth"
 	"proxy/internal/idtoken"
 	"proxy/internal/limits"
@@ -74,6 +75,10 @@ type Config struct {
 	// in place (never proxied, never through the ACL). Nil: the path goes
 	// to Elasticsearch like any other.
 	IdentityTokens *idtoken.Issuer
+
+	// Ask answers POST /_proxy/ask in place (never proxied, never through the
+	// ACL path check: the handler filters by Decide itself). Nil: 503.
+	Ask *ask.Handler
 
 	// BindCacheTTL caches a successful LDAP bind this long. Defaults to 1m.
 	BindCacheTTL time.Duration
@@ -154,7 +159,7 @@ func (rl *relay) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if rl.cfg.Kerberos != nil {
 		w.Header().Set("WWW-Authenticate", "Negotiate")
 	}
-	if rl.isTokenRoute(r) {
+	if rl.isTokenRoute(r) || isAskRoute(r) {
 		identityTokenError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
@@ -186,6 +191,10 @@ const selfPrivilegesPath = "/_security/user/_has_privileges"
 func (rl *relay) decideAndForward(w http.ResponseWriter, r *http.Request, id auth.Identity) {
 	if rl.isTokenRoute(r) {
 		rl.identityToken(w, id)
+		return
+	}
+	if isAskRoute(r) {
+		rl.cfg.Ask.Serve(w, r, id)
 		return
 	}
 	if r.URL.Path == selfAuthenticatePath && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
@@ -262,6 +271,10 @@ const IdentityTokenPath = "/_proxy/identity-token"
 
 func (rl *relay) isTokenRoute(r *http.Request) bool {
 	return rl.cfg.IdentityTokens != nil && r.Method == http.MethodPost && r.URL.Path == IdentityTokenPath
+}
+
+func isAskRoute(r *http.Request) bool {
+	return r.Method == http.MethodPost && r.URL.Path == ask.Path
 }
 
 func (rl *relay) identityToken(w http.ResponseWriter, id auth.Identity) {

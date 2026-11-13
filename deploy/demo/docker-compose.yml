@@ -281,6 +281,7 @@ services:
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
       - LDAP_READONLY_PASSWORD=${LDAP_READONLY_PASSWORD}
       - SESSION_SECRET=${SESSION_SECRET}
+      - MODEL_API_KEY=${MODEL_API_KEY:-}
     volumes:
       - ./configs/proxy.yaml:/etc/proxy/proxy.yaml:ro
       - ./certs/ca.crt:/etc/proxy/certs/ca.crt:ro

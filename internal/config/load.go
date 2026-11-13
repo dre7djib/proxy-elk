@@ -184,6 +184,15 @@ func (c *Config) validate(secrets secretSet) error {
 		}
 	}
 
+	if c.Model.URL != "" {
+		if c.Model.Name == "" {
+			return fmt.Errorf("model.name is required when model.url is set")
+		}
+		if _, ok := secrets.paths["model.api_key"]; !ok || c.Model.APIKey == "" {
+			return fmt.Errorf("model.api_key must be ${env:NAME} or ${file:PATH}")
+		}
+	}
+
 	if oidcActive || ldapActive || kerberosActive {
 		if _, ok := secrets.paths["session.secret"]; !ok || c.Session.Secret == "" {
 			return fmt.Errorf("session.secret must be ${env:NAME} or ${file:PATH}")

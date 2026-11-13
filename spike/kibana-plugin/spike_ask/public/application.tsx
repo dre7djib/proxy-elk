@@ -23,6 +23,38 @@ const SpikeAskApp: React.FC<{ http: CoreSetup['http']; locator: Locator }> = ({
     if (url) window.open(url, '_blank');
   };
 
+  const [question, setQuestion] = useState('');
+  const [explanation, setExplanation] = useState('');
+  const [columns, setColumns] = useState<Array<{ name: string }>>([]);
+  const [values, setValues] = useState<unknown[][]>([]);
+  const [askError, setAskError] = useState('');
+  const [asking, setAsking] = useState(false);
+
+  // Ask sends the question (the model writes the query); Run sends the box
+  // contents as-is (no model).
+  const send = async (payload: { question: string } | { esql: string }) => {
+    setAsking(true);
+    setAskError('');
+    try {
+      const res = await http.post<{
+        esql?: string;
+        explanation?: string;
+        columns?: Array<{ name: string }>;
+        values?: unknown[][];
+        error?: string;
+      }>('/api/spike_ask/question', { body: JSON.stringify(payload) });
+      if (res.esql) setEsql(res.esql);
+      if ('question' in payload) setExplanation(res.explanation ?? '');
+      setColumns(res.columns ?? []);
+      setValues(res.values ?? []);
+      setAskError(res.error ?? '');
+    } catch (err: unknown) {
+      setAskError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAsking(false);
+    }
+  };
+
   const [result, setResult] = useState<string>('(not called yet)');
   const [loading, setLoading] = useState(false);
 
@@ -42,6 +74,15 @@ const SpikeAskApp: React.FC<{ http: CoreSetup['http']; locator: Locator }> = ({
     <div style={{ padding: 16 }}>
       <h1>Ask</h1>
       <label>
+        Question
+        <input value={question} onChange={(e) => setQuestion(e.target.value)} style={{ display: 'block', width: '100%' }} />
+      </label>
+      <div style={{ margin: '8px 0' }}>
+        <button onClick={() => send({ question })} disabled={asking || !question.trim()}>
+          {asking ? 'Working…' : 'Ask'}
+        </button>
+      </div>
+      <label>
         ES|QL query
         <textarea value={esql} onChange={(e) => setEsql(e.target.value)} rows={3} style={{ display: 'block', width: '100%' }} />
       </label>
@@ -52,10 +93,35 @@ const SpikeAskApp: React.FC<{ http: CoreSetup['http']; locator: Locator }> = ({
         To <input value={to} onChange={(e) => setTo(e.target.value)} />
       </label>
       <div style={{ margin: '8px 0' }}>
+        <button onClick={() => send({ esql })} disabled={asking || !esql.trim()}>
+          Run
+        </button>{' '}
         <button onClick={openInDiscover} disabled={!esql.trim() || !locator}>
           Open in Discover
         </button>
       </div>
+      {explanation && <p>{explanation}</p>}
+      {askError && <pre style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>{askError}</pre>}
+      {columns.length > 0 && (
+        <table border={1} cellPadding={4} style={{ borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              {columns.map((c) => (
+                <th key={c.name}>{c.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {values.map((row, i) => (
+              <tr key={i}>
+                {row.map((v, j) => (
+                  <td key={j}>{v === null ? '' : String(v)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <p>
         Calls the dummy engine via the short-lived token issued by the proxy (variant: token requested
         through Elasticsearch, with the current user&apos;s session).

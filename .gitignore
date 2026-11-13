@@ -10,3 +10,5 @@ spike/.env
 dist/
 
 docs/
+
+deploy/demo/.env

@@ -21,6 +21,7 @@ type Config struct {
 	Kibana        Kibana        `yaml:"kibana" json:"kibana"`
 	Kerberos      Kerberos      `yaml:"kerberos" json:"kerberos"`
 	IdentityToken IdentityToken `yaml:"identity_token" json:"identity_token"`
+	Model         Model         `yaml:"model" json:"model"`
 
 	secrets secretSet
 }
@@ -170,6 +171,14 @@ type IdentityToken struct {
 type IdentityKey struct {
 	KID        string `yaml:"kid" json:"kid"`
 	PrivateKey string `yaml:"private_key" json:"private_key"`
+}
+
+// Model is the optional chat-completions endpoint behind POST /_proxy/ask.
+// Empty URL: the route answers 503. APIKey must be a secret reference.
+type Model struct {
+	URL    string `yaml:"url" json:"url"`
+	APIKey string `yaml:"api_key" json:"api_key"`
+	Name   string `yaml:"name" json:"name"`
 }
 
 // Session configures the HMAC-signed login session shared by OIDC and

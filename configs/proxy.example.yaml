@@ -183,3 +183,10 @@ session:
 #       private_key: "${file:/etc/proxy/idtoken-current.pem}"
 #     - kid: previous
 #       private_key: "${file:/etc/proxy/idtoken-previous.pem}"
+
+# Optional assistant model behind POST /_proxy/ask (any chat-completions
+# API). Absent: the route answers 503.
+# model:
+#   url: https://api.openai.com/v1/chat/completions
+#   api_key: "${env:MODEL_API_KEY}"
+#   name: gpt-4o-mini

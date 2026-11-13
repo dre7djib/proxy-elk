@@ -8,6 +8,7 @@ import type {
 import type { SpikeAskConfig } from './config';
 import type { SpikeAskPluginSetup, SpikeAskPluginStart } from './types';
 import { registerAskRoute } from './routes/ask';
+import { registerQuestionRoute } from './routes/question';
 import { registerUsersRoute } from './routes/users';
 
 // Minimal New Platform plugin. Routes:
@@ -25,6 +26,7 @@ export class SpikeAskPlugin implements Plugin<SpikeAskPluginSetup, SpikeAskPlugi
     const router = core.http.createRouter();
 
     registerAskRoute(router, { engineUrl: config.engineUrl, tokenPath: config.tokenPath, logger: this.logger });
+    registerQuestionRoute(router, { logger: this.logger });
     registerUsersRoute(router, {
       shadowPassword: config.shadowPassword,
       logger: this.logger,
