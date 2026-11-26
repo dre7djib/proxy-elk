@@ -18,6 +18,18 @@ var readPOSTSuffixes = []string{
 	"/_search", "/_msearch", "/_count", "/_field_caps", "/_validate/query", "/_async_search",
 }
 
+// esqlPaths are cluster-level ES|QL endpoints. Their indices live in the
+// body, so the relay applies esql.Allow instead of indicesFromPath.
+var esqlPaths = map[string]bool{
+	"/_query":       true,
+	"/_query/async": true,
+}
+
+// IsESQL reports whether path is an ES|QL execute endpoint.
+func IsESQL(reqPath string) bool {
+	return esqlPaths[path.Clean(reqPath)]
+}
+
 // Classify derives the Action an upstream Elasticsearch request
 // represents from its HTTP method and path. Only ActionRead can
 // ever be granted by a rule (Parse rejects any other action in YAML), so
@@ -34,6 +46,9 @@ func Classify(method, reqPath string) Action {
 	case "GET", "HEAD":
 		return ActionRead
 	case "POST":
+		if IsESQL(reqPath) {
+			return ActionRead
+		}
 		for _, suffix := range readPOSTSuffixes {
 			if strings.HasSuffix(reqPath, suffix) {
 				return ActionRead

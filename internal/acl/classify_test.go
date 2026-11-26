@@ -2,6 +2,12 @@ package acl
 
 import "testing"
 
+func TestIsESQL(t *testing.T) {
+	if !IsESQL("/_query") || !IsESQL("/_query/async") || IsESQL("/logs/_query") {
+		t.Fatal("IsESQL path mismatch")
+	}
+}
+
 func TestClassify(t *testing.T) {
 	cases := []struct {
 		method, path string
@@ -15,6 +21,8 @@ func TestClassify(t *testing.T) {
 		{"POST", "/logs-a/_field_caps", ActionRead},
 		{"POST", "/logs-a/_validate/query", ActionRead},
 		{"POST", "/logs-a/_async_search", ActionRead},
+		{"POST", "/_query", ActionRead},
+		{"POST", "/_query/async", ActionRead},
 		{"POST", "/logs-a/_doc", ActionWrite},
 		{"PUT", "/logs-a/_doc/1", ActionWrite},
 		{"DELETE", "/logs-a/_doc/1", ActionWrite},

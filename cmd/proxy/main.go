@@ -21,6 +21,7 @@ import (
 	"proxy/internal/auth"
 	"proxy/internal/config"
 	"proxy/internal/es"
+	"proxy/internal/esql"
 	"proxy/internal/idtoken"
 	"proxy/internal/limits"
 	"proxy/internal/proxy"
@@ -462,9 +463,10 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 		})
 	}
 	resolver := acl.NewESResolver(cfg.Elasticsearch.URL, cfg.Elasticsearch.APIKey)
+	enrich := &esql.EnrichClient{URL: cfg.Elasticsearch.URL, APIKey: cfg.Elasticsearch.APIKey}
 	mux.Handle("/", es.NewRelay(es.Config{
 		Ask: &ask.Handler{
-			Target: target, Policy: policy, Resolver: resolver,
+			Target: target, Policy: policy, Resolver: resolver, Enrich: enrich,
 			RunAsUser: cfg.Elasticsearch.RunAsUser, RunAsPassword: cfg.Elasticsearch.RunAsPassword,
 			ModelURL: cfg.Model.URL, ModelKey: cfg.Model.APIKey, ModelName: cfg.Model.Name,
 		},
@@ -478,6 +480,7 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 		Counter:        counter,
 		Policy:         policy,
 		Resolver:       resolver,
+		Enrich:         enrich,
 		RunAsUser:      cfg.Elasticsearch.RunAsUser,
 		RunAsPassword:  cfg.Elasticsearch.RunAsPassword,
 		ShadowPassword: cfg.Elasticsearch.ShadowPassword,
