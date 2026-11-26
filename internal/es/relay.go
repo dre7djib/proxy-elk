@@ -1,11 +1,13 @@
 package es
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 	"proxy/internal/acl"
 	"proxy/internal/ask"
 	"proxy/internal/auth"
+	"proxy/internal/esql"
 	"proxy/internal/idtoken"
 	"proxy/internal/limits"
 )
@@ -49,6 +52,9 @@ type Config struct {
 
 	Policy   func() *acl.Policy
 	Resolver acl.IndexResolver
+	// Enrich resolves ENRICH policy → source indices for ES|QL guards.
+	// Nil denies any /_query that uses ENRICH.
+	Enrich esql.PolicySources
 
 	// RunAsUser/RunAsPassword authenticate upstream once ACL allows a
 	// request; es-security-runas-user then impersonates the caller.
@@ -211,9 +217,34 @@ func (rl *relay) decideAndForward(w http.ResponseWriter, r *http.Request, id aut
 		return
 	}
 
+	decideCtx := acl.DecideContext{RemoteAddr: r.RemoteAddr, Method: r.Method, Time: time.Now()}
 	action := acl.Classify(r.Method, r.URL.Path)
-	names := indicesFromPath(r.URL.Path)
 
+	if r.Method == http.MethodPost && acl.IsESQL(r.URL.Path) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "access denied", http.StatusForbidden)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		var payload struct {
+			Query string `json:"query"`
+		}
+		if json.Unmarshal(body, &payload) != nil || strings.TrimSpace(payload.Query) == "" {
+			http.Error(w, "access denied: ES|QL query required", http.StatusForbidden)
+			return
+		}
+		if err := esql.Allow(r.Context(), payload.Query, id, decideCtx, rl.cfg.Policy(), rl.cfg.Resolver, rl.cfg.Enrich); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		r.Header.Set("Authorization", basicAuthHeader(rl.cfg.RunAsUser, rl.cfg.RunAsPassword))
+		r.Header.Set("es-security-runas-user", id.Subject)
+		rl.proxy.ServeHTTP(w, r)
+		return
+	}
+
+	names := indicesFromPath(r.URL.Path)
 	var resolved []string
 	if len(names) > 0 {
 		var err error
@@ -224,7 +255,6 @@ func (rl *relay) decideAndForward(w http.ResponseWriter, r *http.Request, id aut
 		}
 	}
 
-	decideCtx := acl.DecideContext{RemoteAddr: r.RemoteAddr, Method: r.Method, Time: time.Now()}
 	if err := rl.cfg.Policy().Decide(id, decideCtx, resolved, action); err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return

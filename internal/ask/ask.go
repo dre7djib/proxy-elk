@@ -19,6 +19,7 @@ import (
 
 	"proxy/internal/acl"
 	"proxy/internal/auth"
+	"proxy/internal/esql"
 )
 
 // Path is where Kibana (asCurrentUser) posts a question or an edited query.
@@ -40,11 +41,15 @@ type Handler struct {
 	RunAsUser     string
 	RunAsPassword string
 
+	// Enrich resolves ENRICH policy → source indices (J2-08). Nil denies
+	// any query that uses ENRICH.
+	Enrich esql.PolicySources
+
 	// ModelURL is the full chat-completions URL; empty answers 503.
-	ModelURL    string
-	ModelKey    string
-	ModelName   string
-	HTTPClient  *http.Client
+	ModelURL   string
+	ModelKey   string
+	ModelName  string
+	HTTPClient *http.Client
 }
 
 type request struct {
@@ -79,10 +84,12 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 	}
 	req.Question, req.ESQL = strings.TrimSpace(req.Question), strings.TrimSpace(req.ESQL)
 
+	dc := acl.DecideContext{RemoteAddr: r.RemoteAddr, Method: r.Method, Time: time.Now()}
+
 	// Replay of an edited query: no model, no schema.
 	if req.ESQL != "" {
 		out := response{ESQL: req.ESQL}
-		cols, vals, err := h.run(r.Context(), id, req.ESQL)
+		cols, vals, err := h.run(r.Context(), id, req.ESQL, dc)
 		if err != nil {
 			out.Error = err.Error()
 		} else {
@@ -96,7 +103,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 		return
 	}
 
-	schema, err := h.schema(r.Context(), id, r)
+	schema, err := h.schema(r.Context(), id, dc)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{Error: "schema lookup failed"})
 		return
@@ -111,26 +118,26 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 		{Role: "user", Content: "Schema (index: field type):\n" + schema},
 		{Role: "user", Content: "Question: " + req.Question},
 	}
-	esql, explanation, raw, err := h.complete(r.Context(), msgs)
+	query, explanation, raw, err := h.complete(r.Context(), msgs)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{Error: "model call failed"})
 		return
 	}
-	out := response{ESQL: esql, Explanation: explanation}
-	cols, vals, runErr := h.run(r.Context(), id, esql)
+	out := response{ESQL: query, Explanation: explanation}
+	cols, vals, runErr := h.run(r.Context(), id, query, dc)
 	if runErr != nil {
 		// One correction only.
 		msgs = append(msgs,
 			chatMessage{Role: "assistant", Content: raw},
 			chatMessage{Role: "user", Content: "Elasticsearch rejected that query: " + runErr.Error() + "\nReturn a corrected JSON object."})
-		esql2, expl2, _, err := h.complete(r.Context(), msgs)
+		query2, expl2, _, err := h.complete(r.Context(), msgs)
 		if err != nil {
 			out.Error = runErr.Error()
 			writeJSON(w, http.StatusOK, out)
 			return
 		}
-		out.ESQL, out.Explanation = esql2, expl2
-		cols, vals, runErr = h.run(r.Context(), id, esql2)
+		out.ESQL, out.Explanation = query2, expl2
+		cols, vals, runErr = h.run(r.Context(), id, query2, dc)
 	}
 	if runErr != nil {
 		out.Error = runErr.Error()
@@ -141,12 +148,11 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 }
 
 // schema lists "index: field type" for every index the caller may read.
-func (h *Handler) schema(ctx context.Context, id auth.Identity, r *http.Request) (string, error) {
+func (h *Handler) schema(ctx context.Context, id auth.Identity, dc acl.DecideContext) (string, error) {
 	all, err := h.Resolver.Resolve(ctx, []string{"*"})
 	if err != nil {
 		return "", err
 	}
-	dc := acl.DecideContext{RemoteAddr: r.RemoteAddr, Method: http.MethodGet, Time: time.Now()}
 	var allowed []string
 	for _, name := range all {
 		if h.Policy().Decide(id, dc, []string{name}, acl.ActionRead) == nil {
@@ -247,11 +253,14 @@ func (h *Handler) complete(ctx context.Context, msgs []chatMessage) (esql, expla
 	return strings.TrimSpace(out.ESQL), out.Explanation, raw, nil
 }
 
-// run POSTs the query to /_query as the caller. It is the only ES path this
+// run checks the ES|QL indices (including ENRICH sources) against the ACL,
+// then POSTs the query to /_query as the caller. It is the only ES path this
 // handler sends a model-produced body to.
-// shortcut: ENRICH source index is not checked here, J2-08 does that before monitor_enrich is granted.
-func (h *Handler) run(ctx context.Context, id auth.Identity, esql string) (columns, values json.RawMessage, err error) {
-	payload, _ := json.Marshal(map[string]string{"query": esql})
+func (h *Handler) run(ctx context.Context, id auth.Identity, query string, dc acl.DecideContext) (columns, values json.RawMessage, err error) {
+	if err := esql.Allow(ctx, query, id, dc, h.Policy(), h.Resolver, h.Enrich); err != nil {
+		return nil, nil, err
+	}
+	payload, _ := json.Marshal(map[string]string{"query": query})
 	body, status, err := h.es(ctx, id, http.MethodPost, "/_query", payload)
 	if err != nil {
 		return nil, nil, err

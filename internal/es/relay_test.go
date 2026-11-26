@@ -473,6 +473,80 @@ func TestRelayBulkWriteFromUserDenied(t *testing.T) {
 	}
 }
 
+type mapEnrich map[string][]string
+
+func (m mapEnrich) SourceIndices(_ context.Context, policy string) ([]string, error) {
+	idxs, ok := m[policy]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return idxs, nil
+}
+
+func newESQLRelay(t *testing.T, upstream http.HandlerFunc) http.Handler {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(upstream))
+	t.Cleanup(srv.Close)
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := testPolicy(t)
+	return NewRelay(Config{
+		Target: target,
+		LDAP: &fakeDirectory{authenticate: func(username, password string) (*auth.Identity, error) {
+			if username == "alice" && password == "goodpass" {
+				return &auth.Identity{Subject: "alice", Groups: []string{"equipe-a-viewer"}}, nil
+			}
+			return nil, errAuthFailed
+		}},
+		Policy:        func() *acl.Policy { return policy },
+		Resolver:      echoResolver{},
+		Enrich:        mapEnrich{"sp05-owners-a-policy": {"equipe-a-sp05-owners"}, "sp05-owners-b-policy": {"equipe-b-sp05-owners"}},
+		RunAsUser:     "proxy_service",
+		RunAsPassword: "runas-secret",
+	})
+}
+
+func TestRelayESQLSameTeamAllowed(t *testing.T) {
+	var gotBody string
+	relay := newESQLRelay(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	body := `{"query":"FROM equipe-a-logs | ENRICH sp05-owners-a-policy ON host"}`
+	req := httptest.NewRequest(http.MethodPost, "/_query", strings.NewReader(body))
+	req.Header.Set("Authorization", basicHeader("alice", "goodpass"))
+	rec := httptest.NewRecorder()
+	relay.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if gotBody != body {
+		t.Fatalf("upstream body = %q", gotBody)
+	}
+}
+
+func TestRelayESQLCrossTeamENRICHDenied(t *testing.T) {
+	called := false
+	relay := newESQLRelay(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatal("upstream must not be called")
+	})
+	req := httptest.NewRequest(http.MethodPost, "/_query", strings.NewReader(
+		`{"query":"FROM equipe-a-logs | ENRICH sp05-owners-b-policy ON host"}`))
+	req.Header.Set("Authorization", basicHeader("alice", "goodpass"))
+	rec := httptest.NewRecorder()
+	relay.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || called {
+		t.Fatalf("status = %d called=%v body=%s", rec.Code, called, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "equipe-b-sp05-owners") {
+		t.Fatalf("want foreign source in body, got %s", rec.Body.String())
+	}
+}
+
 func TestRelayIdentityToken(t *testing.T) {
 	k, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

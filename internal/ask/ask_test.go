@@ -3,6 +3,7 @@ package ask
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +16,24 @@ import (
 	"proxy/internal/auth"
 )
 
-type fixedResolver []string
+type testResolver struct{ all []string }
 
-func (f fixedResolver) Resolve(context.Context, []string) ([]string, error) { return f, nil }
+func (t testResolver) Resolve(_ context.Context, names []string) ([]string, error) {
+	if len(names) == 1 && names[0] == "*" {
+		return append([]string(nil), t.all...), nil
+	}
+	return append([]string(nil), names...), nil
+}
+
+type mapEnrich map[string][]string
+
+func (m mapEnrich) SourceIndices(_ context.Context, policy string) ([]string, error) {
+	idxs, ok := m[policy]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+	return idxs, nil
+}
 
 type fakes struct {
 	h          *Handler
@@ -69,7 +85,8 @@ func newFakes(t *testing.T, replies ...string) *fakes {
 	target, _ := url.Parse(es.URL)
 	f.h = &Handler{
 		Target: target, Policy: func() *acl.Policy { return policy },
-		Resolver:  fixedResolver{"equipe-a-sample", "equipe-b-sample"},
+		Resolver:  testResolver{all: []string{"equipe-a-sample", "equipe-b-sample"}},
+		Enrich:    mapEnrich{"sp05-owners-a-policy": {"equipe-a-sp05-owners"}, "sp05-owners-b-policy": {"equipe-b-sp05-owners"}},
 		RunAsUser: "svc", RunAsPassword: "pw",
 		ModelURL: model.URL, ModelKey: "k", ModelName: "m",
 	}
@@ -114,13 +131,13 @@ func TestFailedQueryRetriedOnce(t *testing.T) {
 
 func TestSecondFailureReturnsQueryAndError(t *testing.T) {
 	f := newFakes(t,
-		`{"esql":"bad 1","explanation":"a"}`,
-		`{"esql":"bad 2","explanation":"b"}`)
+		`{"esql":"FROM equipe-a-sample | KEEP bad","explanation":"a"}`,
+		`{"esql":"FROM equipe-a-sample | KEEP bad","explanation":"b"}`)
 	_, out := f.post(`{"question":"x"}`)
 	if f.modelCalls.Load() != 2 || len(f.queries) != 2 {
 		t.Fatalf("expected exactly one retry, model %d queries %v", f.modelCalls.Load(), f.queries)
 	}
-	if out.ESQL != "bad 2" || !strings.Contains(out.Error, "Unknown column") {
+	if out.ESQL != "FROM equipe-a-sample | KEEP bad" || !strings.Contains(out.Error, "Unknown column") {
 		t.Fatalf("got %+v", out)
 	}
 }
@@ -132,9 +149,36 @@ func TestEditedQueryNeverCallsModel(t *testing.T) {
 		t.Fatalf("model %d queries %v out %+v", f.modelCalls.Load(), f.queries, out)
 	}
 	// A failing edit is not retried either.
-	_, out = f.post(`{"esql":"bad"}`)
+	_, out = f.post(`{"esql":"FROM equipe-a-sample | KEEP bad"}`)
 	if f.modelCalls.Load() != 0 || out.Error == "" {
 		t.Fatalf("model %d out %+v", f.modelCalls.Load(), out)
+	}
+}
+
+func TestCrossTeamENRICHDeniedBeforeQuery(t *testing.T) {
+	f := newFakes(t)
+	_, out := f.post(`{"esql":"FROM equipe-a-sample | ENRICH sp05-owners-b-policy ON host"}`)
+	if out.Error == "" || len(f.queries) != 0 {
+		t.Fatalf("cross-team ENRICH must be denied before /_query, got %+v queries %v", out, f.queries)
+	}
+	if !strings.Contains(out.Error, "equipe-b-sp05-owners") {
+		t.Fatalf("error should name the foreign source index: %q", out.Error)
+	}
+}
+
+func TestSameTeamENRICHAllowed(t *testing.T) {
+	f := newFakes(t)
+	_, out := f.post(`{"esql":"FROM equipe-a-sample | ENRICH sp05-owners-a-policy ON host"}`)
+	if out.Error != "" || len(f.queries) != 1 {
+		t.Fatalf("got %+v queries %v", out, f.queries)
+	}
+}
+
+func TestUncertainESQLDenied(t *testing.T) {
+	f := newFakes(t)
+	_, out := f.post(`{"esql":"bad"}`)
+	if out.Error == "" || len(f.queries) != 0 {
+		t.Fatalf("uncertain query must not reach ES: %+v queries %v", out, f.queries)
 	}
 }
 
