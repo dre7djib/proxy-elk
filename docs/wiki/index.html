@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -301,6 +301,30 @@
       h2 { break-before: page; }
       h2:first-of-type { break-before: auto; }
     }
+    .layer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+      gap: 0.75rem;
+      margin: 1rem 0 1.5rem;
+    }
+    .layer-card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      padding: 0.9rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-elevated);
+      color: var(--text);
+    }
+    .layer-card:hover { border-color: var(--accent); text-decoration: none; }
+    .layer-card strong { color: var(--text); }
+    .layer-card span { color: var(--muted); font-size: 0.9rem; }
+    .layer-card .layer-num {
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+    }
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -311,31 +335,39 @@
     <aside>
       <a class="brand" href="#top">Proxy ELK</a>
       <div class="brand-sub">Documentation wiki</div>
-      <p class="toc-mobile"><a href="#sommaire">Sommaire ↓</a></p>
-      <nav id="sommaire" aria-label="Sommaire">
+      <p class="toc-mobile"><a href="#contents">Contents ↓</a></p>
+      <nav id="contents" aria-label="Contents">
         <ul>
-          <li><a href="#top">Accueil</a></li>
-          <li class="group">Produit</li>
-          <li><a href="#pourquoi">Pourquoi</a></li>
-          <li><a href="#principes">Principes</a></li>
+          <li><a href="#top">Home</a></li>
+          <li class="group">Product</li>
+          <li><a href="#why">Why</a></li>
+          <li><a href="#principles">Principles</a></li>
           <li><a href="#roadmap">Roadmap</a></li>
           <li><a href="#architecture">Architecture</a></li>
-          <li><a href="layers/index.html">Couche par couche (diagrammes)</a></li>
-          <li class="group">Fonctionnel</li>
-          <li><a href="#authentification">Authentification</a></li>
+          <li class="group">Layer by layer</li>
+          <li><a href="#layers">All layers</a></li>
+          <li><a href="layers/index.html">Overview diagram ↗</a></li>
+          <li><a href="layers/01-kibana-ask.html">1 · Kibana &amp; Ask ↗</a></li>
+          <li><a href="layers/02-authentication.html">2 · Authentication ↗</a></li>
+          <li><a href="layers/03-authorization.html">3 · Authorization ↗</a></li>
+          <li><a href="layers/04-elasticsearch.html">4 · Elasticsearch ↗</a></li>
+          <li><a href="layers/05-ai-agent-mcp.html">5 · AI assistant ↗</a></li>
+          <li><a href="layers/06-end-to-end.html">End to end ↗</a></li>
+          <li class="group">Features</li>
+          <li><a href="#authentication">Authentication</a></li>
           <li><a href="#acl">ACL</a></li>
-          <li><a href="#relais">Relais Elasticsearch</a></li>
+          <li><a href="#relay">Elasticsearch relay</a></li>
           <li><a href="#quotas">Quotas</a></li>
-          <li><a href="#audit">Audit &amp; métriques</a></li>
-          <li><a href="#api">Endpoints HTTP</a></li>
+          <li><a href="#audit">Audit &amp; metrics</a></li>
+          <li><a href="#api">HTTP endpoints</a></li>
           <li class="group">Ops</li>
           <li><a href="#configuration">Configuration</a></li>
-          <li><a href="#deploiement">Déploiement</a></li>
-          <li><a href="#demo">Démo locale</a></li>
+          <li><a href="#deployment">Deployment</a></li>
+          <li><a href="#demo">Local demo</a></li>
           <li><a href="#cli">CLI</a></li>
-          <li class="group">Gouvernance</li>
-          <li><a href="#securite">Sécurité</a></li>
-          <li><a href="#contribuer">Contribuer</a></li>
+          <li class="group">Governance</li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#contributing">Contributing</a></li>
         </ul>
       </nav>
     </aside>
@@ -343,59 +375,61 @@
     <main id="top">
       <h1>Proxy ELK</h1>
       <p class="lead">
-        Proxy d’authentification et d’autorisation devant un Elasticsearch
-        self-hosted, avec un assistant IA prévu dans Kibana via un plugin
-        minimal. Open source — licence Apache-2.0.
+        Authentication and authorization proxy in front of a self-hosted
+        Elasticsearch, with an AI assistant in Kibana through a minimal
+        plugin. Open source — Apache-2.0 license.
       </p>
 
       <div class="callout">
-        <strong>Périmètre actuel (jalon 1)</strong> —
-        authentification (OIDC, LDAP/AD, JWT M2M, Kerberos), ACL en lecture
-        seule, audit JSON, quotas, relais Elasticsearch avec
-        <code>es-security-runas-user</code>, image Docker et binaire systemd.
-        Kibana Cloud est hors scope.
+        <strong>Current scope</strong> — milestone 1 is done:
+        authentication (OIDC, LDAP/AD, M2M JWT, Kerberos), read-only ACL,
+        JSON audit, quotas, Elasticsearch relay with
+        <code>es-security-runas-user</code>, Docker image and systemd binary.
+        Milestone 2 is in progress: <code>/_proxy/ask</code> assistant,
+        ES|QL index guard, teams synced to Kibana, identity tokens.
+        Elastic Cloud is out of scope.
       </div>
 
-      <!-- ========== POURQUOI ========== -->
-      <h2 id="pourquoi">Pourquoi</h2>
+      <!-- ========== WHY ========== -->
+      <h2 id="why">Why</h2>
       <p>
-        Certaines fonctions de sécurité d’Elasticsearch (LDAP / Active Directory,
-        SSO, audit) sont réservées aux offres payantes. Ce projet les apporte
-        <em>devant</em> Elasticsearch, sans toucher au code Elastic ni à sa
-        vérification de licence.
+        Some Elasticsearch security features (LDAP / Active Directory,
+        SSO, audit) are reserved for paid tiers. This project brings them
+        <em>in front of</em> Elasticsearch, without touching Elastic's code or
+        its license check.
       </p>
       <ul>
-        <li>Un seul chemin vers Elasticsearch : le proxy.</li>
-        <li>Identité résolue hors d’Elastic (OIDC, LDAP, JWT, Kerberos).</li>
-        <li>Décision d’accès déclarative (ACL fail-closed, lecture seule).</li>
-        <li>Impersonation upstream via un compte de service +
-          <code>es-security-runas-user</code> — le mot de passe de l’utilisateur
-          n’atteint jamais Elasticsearch.</li>
+        <li>One single path to Elasticsearch: the proxy.</li>
+        <li>Identity resolved outside Elastic (OIDC, LDAP, JWT, Kerberos).</li>
+        <li>Declarative access decision (fail-closed, read-only ACL).</li>
+        <li>Upstream impersonation through a service account +
+          <code>es-security-runas-user</code> — the user's password never
+          reaches Elasticsearch.</li>
       </ul>
 
-      <!-- ========== PRINCIPES ========== -->
-      <h2 id="principes">Principes</h2>
+      <!-- ========== PRINCIPLES ========== -->
+      <h2 id="principles">Principles</h2>
       <dl class="principles">
         <div class="principle">
           <dt>Deny by default</dt>
-          <dd>Toute route ou action non reconnue est refusée.</dd>
+          <dd>Any unrecognized route or action is denied.</dd>
         </div>
         <div class="principle">
-          <dt>Droits de l’utilisateur</dt>
-          <dd>L’IA n’a jamais plus de droits que la personne connectée.</dd>
+          <dt>User's rights</dt>
+          <dd>The AI never has more rights than the logged-in person.</dd>
         </div>
         <div class="principle">
-          <dt>Lecture seule</dt>
-          <dd>Tout ce que l’IA génère reste en lecture seule. Les règles ACL
-            ne peuvent accorder que <code>read</code>.</dd>
+          <dt>Read-only</dt>
+          <dd>Everything the AI generates stays read-only. ACL rules can
+            only grant <code>read</code>.</dd>
         </div>
         <div class="principle">
-          <dt>Transparence</dt>
-          <dd>La requête générée est toujours visible et rejouable.</dd>
+          <dt>Transparency</dt>
+          <dd>The generated query is always visible and replayable.</dd>
         </div>
         <div class="principle">
           <dt>Self-hosted</dt>
-          <dd>Kibana self-hosted uniquement. Elastic Cloud est hors scope.</dd>
+          <dd>Self-hosted Kibana only. Elastic Cloud is out of scope.</dd>
         </div>
       </dl>
 
@@ -403,211 +437,278 @@
       <h2 id="roadmap">Roadmap</h2>
       <table>
         <thead>
-          <tr><th>Jalon</th><th>Contenu</th><th>Livrable</th></tr>
+          <tr><th>Milestone</th><th>Content</th><th>Deliverable</th></tr>
         </thead>
         <tbody>
           <tr>
             <td><span class="badge m1">1</span> Auth</td>
-            <td>OIDC, LDAP/AD, ACL, audit, secrets, relais ES</td>
-            <td>Proxy utilisable seul devant Elasticsearch</td>
+            <td>OIDC, LDAP/AD, ACL, audit, secrets, ES relay</td>
+            <td>A proxy usable on its own in front of Elasticsearch</td>
           </tr>
           <tr>
             <td><span class="badge m2">2</span> Ask</td>
-            <td>Assistant IA, plugin Kibana, teams &amp; spaces</td>
-            <td>Page « Ask » dans Kibana</td>
+            <td>AI assistant, Kibana plugin, teams &amp; spaces</td>
+            <td>The “Ask” page in Kibana</td>
           </tr>
           <tr>
             <td><span class="badge m3">3</span> MCP</td>
-            <td>Serveur MCP, analyse de logs</td>
-            <td>Accès MCP + analyse IA d’un log ciblé</td>
+            <td>MCP server, log analysis</td>
+            <td>MCP access + AI analysis of a specific log</td>
           </tr>
         </tbody>
       </table>
       <p>
-        Versions cibles : Elasticsearch et Kibana <strong>8.19</strong>.
-        Une variante 9.x viendra ensuite.
+        Target versions: Elasticsearch and Kibana <strong>8.19</strong>.
+        A 9.x variant will follow.
       </p>
 
       <!-- ========== ARCHITECTURE ========== -->
       <h2 id="architecture">Architecture</h2>
       <p>
-        Le proxy est un binaire Go statique (<code>cmd/proxy</code>) qui écoute
-        HTTP, authentifie l’appelant, décide via l’ACL, puis relaie vers
-        Elasticsearch. Kibana ne parle jamais directement au cluster ES :
-        dans la démo, ES n’a même pas de port exposé sur l’hôte.
-      </p>
-      <p>
-        Pour suivre le fonctionnement couche par couche, voir les
-        <a href="layers/index.html">diagrammes interactifs</a> (en anglais) :
-        Kibana et Ask, authentification, autorisation, Elasticsearch,
-        assistant IA, puis un scénario de bout en bout.
+        The proxy is a static Go binary (<code>cmd/proxy</code>) that listens
+        on HTTP, authenticates the caller, decides through the ACL, then
+        relays to Elasticsearch. Kibana never talks to the ES cluster
+        directly: in the demo, ES does not even expose a port on the host.
+        See the <a href="layers/index.html">interactive overview</a> or the
+        <a href="#layers">layer-by-layer pages</a>.
       </p>
 
       <div class="flow"><span class="hl">Client / Kibana</span>
         │
         ▼
    ┌──────────────── Proxy ELK (:8080) ────────────────┐
-   │  /health  /metrics          (sans auth)           │
+   │  /health  /metrics          (no auth)             │
    │  /auth/*  login OIDC|LDAP|Kerberos|JWT            │
-   │  /*       relais ES → identité → ACL → run_as     │
+   │  /*       ES relay → identity → ACL → run_as      │
    └───────────────────────┬───────────────────────────┘
                            │ Basic (proxy_service)
                            │ + es-security-runas-user: &lt;subject&gt;
                            ▼
                   <span class="hl">Elasticsearch</span></div>
 
-      <h3>Packages internes</h3>
+      <h3>Internal packages</h3>
       <table>
         <thead>
-          <tr><th>Package</th><th>Rôle</th></tr>
+          <tr><th>Package</th><th>Role</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>internal/config</code></td><td>Chargement YAML, résolution <code>${env:}</code> / <code>${file:}</code>, redaction</td></tr>
-          <tr><td><code>internal/auth</code></td><td>OIDC, LDAP, JWT, Kerberos, sessions HMAC, lockout</td></tr>
-          <tr><td><code>internal/acl</code></td><td>Politique, classification read/write/cluster_admin, décision, résolution d’index</td></tr>
-          <tr><td><code>internal/es</code></td><td>Relais HTTP, run_as, substitution shadow password</td></tr>
-          <tr><td><code>internal/limits</code></td><td>Quotas durée / octets / req·min<sup>−1</sup></td></tr>
-          <tr><td><code>internal/audit</code></td><td>Une ligne JSON par requête d’accès (stdout)</td></tr>
-          <tr><td><code>internal/proxy</code></td><td>Handlers HTTP (health, me, login, metrics, guard)</td></tr>
+          <tr><td><code>internal/config</code></td><td>YAML loading, <code>${env:}</code> / <code>${file:}</code> resolution, redaction</td></tr>
+          <tr><td><code>internal/auth</code></td><td>OIDC, LDAP, JWT, Kerberos, HMAC sessions, lockout</td></tr>
+          <tr><td><code>internal/acl</code></td><td>Policy, read/write/cluster_admin classification, decision, index resolution</td></tr>
+          <tr><td><code>internal/esql</code></td><td>Indices read by an ES|QL query (FROM, LOOKUP JOIN, ENRICH), fail-closed check</td></tr>
+          <tr><td><code>internal/es</code></td><td>HTTP relay, run_as, shadow password substitution</td></tr>
+          <tr><td><code>internal/ask</code></td><td>Question → one read-only ES|QL query, run as the caller</td></tr>
+          <tr><td><code>internal/idtoken</code></td><td>Short RS256 identity tokens for the engine, JWKS</td></tr>
+          <tr><td><code>internal/teams</code>, <code>internal/sync</code></td><td>Teams from YAML, Kibana spaces and roles sync</td></tr>
+          <tr><td><code>internal/limits</code></td><td>Duration / bytes / req·min<sup>−1</sup> quotas</td></tr>
+          <tr><td><code>internal/audit</code></td><td>One JSON line per access request (stdout)</td></tr>
+          <tr><td><code>internal/proxy</code></td><td>HTTP handlers (health, me, login, metrics, guard)</td></tr>
         </tbody>
       </table>
 
-      <h3>Flux d’une requête ES</h3>
+      <h3>Flow of an ES request</h3>
       <ol>
-        <li>Identité : cookie de session, ou Bearer JWT, ou Basic (re-vérifié LDAP si besoin).</li>
-        <li>Passthrough : si l’utilisateur est dans <code>passthrough_users</code> (ex. <code>kibana_system</code>), relais tel quel, sans ACL.</li>
-        <li>Classification : méthode + chemin → <code>read</code> | <code>write</code> | <code>cluster_admin</code>.</li>
-        <li>Résolution d’index : aliases → noms concrets via <code>/_resolve/index</code> (API key dédiée).</li>
-        <li>Décision ACL : allow rules uniquement ; sinon 403.</li>
-        <li>Relais : Basic du compte de service + en-tête <code>es-security-runas-user</code>.</li>
+        <li>Identity: session cookie, Bearer JWT, or Basic (re-checked against LDAP when needed).</li>
+        <li>Passthrough: if the user is in <code>passthrough_users</code> (e.g. <code>kibana_system</code>), relayed as is, without ACL.</li>
+        <li>Classification: method + path → <code>read</code> | <code>write</code> | <code>cluster_admin</code>.</li>
+        <li>Index resolution: aliases → concrete names via <code>/_resolve/index</code> (dedicated API key).</li>
+        <li>ACL decision: allow rules only; otherwise 403.</li>
+        <li>Relay: service account Basic + <code>es-security-runas-user</code> header.</li>
       </ol>
+      <p>Diagram: <a href="layers/03-authorization.html">Layer 3 · Authorization</a>.</p>
+
+      <!-- ========== LAYERS ========== -->
+      <h2 id="layers">Layer by layer</h2>
+      <p>
+        Interactive diagrams generated with Archify from the code. Click a
+        component to see its explanation and source files; every page links
+        back to the overview.
+      </p>
+      <div class="layer-grid">
+        <a class="layer-card" href="layers/index.html">
+          <span class="layer-num">0</span>
+          <strong>Overview</strong>
+          <span>The whole stack; click a layer to open it.</span>
+        </a>
+        <a class="layer-card" href="layers/01-kibana-ask.html">
+          <span class="layer-num">1</span>
+          <strong>Kibana &amp; Ask</strong>
+          <span>From the Ask app to <code>/_proxy/ask</code>, Discover link, identity-token spike.</span>
+        </a>
+        <a class="layer-card" href="layers/02-authentication.html">
+          <span class="layer-num">2</span>
+          <strong>Authentication</strong>
+          <span>LDAP login into Kibana step by step; OIDC, Kerberos, JWT.</span>
+        </a>
+        <a class="layer-card" href="layers/03-authorization.html">
+          <span class="layer-num">3</span>
+          <strong>Authorization</strong>
+          <span>Quotas, classification, index resolution, ACL, ES|QL guard.</span>
+        </a>
+        <a class="layer-card" href="layers/04-elasticsearch.html">
+          <span class="layer-num">4</span>
+          <strong>Elasticsearch</strong>
+          <span>Who reaches the cluster and with which credentials.</span>
+        </a>
+        <a class="layer-card" href="layers/05-ai-agent-mcp.html">
+          <span class="layer-num">5</span>
+          <strong>AI assistant</strong>
+          <span>One question through <code>/_proxy/ask</code>; planned agent and MCP.</span>
+        </a>
+        <a class="layer-card" href="layers/06-end-to-end.html">
+          <span class="layer-num">↔</span>
+          <strong>End to end</strong>
+          <span>Allowed question, refused query, audit lines.</span>
+        </a>
+      </div>
 
       <!-- ========== AUTH ========== -->
-      <h2 id="authentification">Authentification</h2>
+      <h2 id="authentication">Authentication</h2>
       <p>
-        Chaque mécanisme se configure par une section YAML. L’omettre le
-        désactive. OIDC, LDAP et Kerberos partagent la même session cookie
-        HMAC (pas de store serveur).
+        Each mechanism is configured by a YAML section; omitting it disables
+        it. OIDC, LDAP and Kerberos share the same HMAC session cookie
+        (no server-side store).
+        Diagram: <a href="layers/02-authentication.html">Layer 2 · Authentication</a>.
       </p>
 
       <h3>OIDC (authorization code)</h3>
       <ul>
-        <li><code>GET /auth/login</code> → redirection vers l’IdP.</li>
-        <li><code>GET /auth/callback</code> → échange du code, cookie de session, redirect <code>/auth/me</code>.</li>
-        <li>Claim groupes configurable (<code>groups_claim</code>, défaut <code>groups</code>).</li>
+        <li><code>GET /auth/login</code> → redirect to the IdP.</li>
+        <li><code>GET /auth/callback</code> → code exchange, session cookie, redirect to <code>/auth/me</code>.</li>
+        <li>Configurable groups claim (<code>groups_claim</code>, default <code>groups</code>).</li>
       </ul>
 
       <h3>LDAP / Active Directory</h3>
       <ul>
-        <li><code>POST /auth/ldap</code> — login username/password.</li>
-        <li>LDAPS ou LDAP + StartTLS ; plaintext uniquement avec
+        <li><code>POST /auth/ldap</code> — username/password login.</li>
+        <li>LDAPS or LDAP + StartTLS; plaintext only with
           <code>insecure_allow_plaintext</code> (dev).</li>
-        <li>Failover via <code>urls:</code> (liste ordonnée, exclusif avec <code>url</code>).</li>
-        <li>Groupes imbriqués AD : <code>nested_groups: true</code>
+        <li>Failover via <code>urls:</code> (ordered list, exclusive with <code>url</code>).</li>
+        <li>AD nested groups: <code>nested_groups: true</code>
           (<code>LDAP_MATCHING_RULE_IN_CHAIN</code>).</li>
-        <li>Lockout par couple (user, IP) : <code>max_failures</code> /
+        <li>Lockout per (user, IP) pair: <code>max_failures</code> /
           <code>failure_window</code> / <code>lockout_for</code>.</li>
-        <li>Filtre AD typique : <code>(sAMAccountName=%s)</code>.</li>
+        <li>Typical AD filter: <code>(sAMAccountName=%s)</code>.</li>
       </ul>
 
-      <h3>JWT machine-à-machine</h3>
+      <h3>Machine-to-machine JWT</h3>
       <ul>
-        <li>Le proxy <em>vérifie</em> un Bearer JWT déjà émis par un IdP externe ; il n’en émet jamais.</li>
-        <li>Pas de cookie de session pour ces appelants.</li>
-        <li>Config : <code>issuer</code>, <code>audience</code>, <code>jwks_url</code>.</li>
+        <li>The proxy <em>verifies</em> a Bearer JWT already issued by an external IdP; it never issues one.</li>
+        <li>No session cookie for these callers.</li>
+        <li>Config: <code>issuer</code>, <code>audience</code>, <code>jwks_url</code>.</li>
       </ul>
 
       <h3>Kerberos / SPNEGO</h3>
       <ul>
-        <li>Avec <code>kerberos:</code> + <code>kibana:</code>,
-          <code>GET /auth/kibana</code> devient un challenge Negotiate
-          (plus de formulaire).</li>
-        <li>Le proxy n’appelle jamais le KDC : seul le keytab monté suffit
-          (pas de <code>krb5.conf</code> dans le conteneur).</li>
-        <li>Les groupes viennent toujours de LDAP (<code>lookup</code>).</li>
+        <li>With <code>kerberos:</code> + <code>kibana:</code>,
+          <code>GET /auth/kibana</code> becomes a Negotiate challenge
+          (no more form).</li>
+        <li>The proxy never calls the KDC: the mounted keytab is enough
+          (no <code>krb5.conf</code> in the container).</li>
+        <li>Groups always come from LDAP (<code>lookup</code>).</li>
       </ul>
 
-      <h3>Pont SSO Kibana</h3>
+      <h3>Kibana SSO bridge</h3>
       <p>
-        <code>GET/POST /auth/kibana</code> (nécessite <code>ldap:</code> et
-        <code>kibana:</code>) authentifie l’utilisateur puis ouvre la session
-        Kibana pour lui — l’écran de login Kibana n’apparaît pas.
-        <code>url</code> = adresse appelée par le proxy ;
-        <code>public_url</code> = redirection navigateur.
+        <code>GET/POST /auth/kibana</code> (requires <code>ldap:</code> and
+        <code>kibana:</code>) authenticates the user then opens the Kibana
+        session on their behalf — the Kibana login screen never shows.
+        <code>url</code> = address the proxy calls;
+        <code>public_url</code> = browser redirect.
       </p>
 
       <h3>Session</h3>
       <p>
-        Cookie HMAC signé, secret ≥ 32 octets (<code>session.secret</code>),
-        TTL configurable (défaut 8 h). Flag <code>Secure</code> si
-        <code>oidc.redirect_url</code> est en HTTPS.
+        HMAC-signed cookie, secret ≥ 32 bytes (<code>session.secret</code>),
+        configurable TTL (default 8 h). <code>Secure</code> flag when
+        <code>oidc.redirect_url</code> uses HTTPS.
+      </p>
+
+      <h3>Identity tokens (milestone 2)</h3>
+      <p>
+        With <code>identity_token:</code>, an authenticated user can call
+        <code>POST /_proxy/identity-token</code> to get a short RS256 JWT
+        (TTL 5–15 min, two keys for rotation) for the engine. Public keys are
+        served at <code>GET /identity/jwks</code>. Service accounts
+        (passthrough) get no token.
       </p>
 
       <!-- ========== ACL ========== -->
       <h2 id="acl">ACL</h2>
       <p>
-        Politique déclarative, <strong>allow rules uniquement</strong>,
-        fail-closed. Le proxy refuse de démarrer sans au moins une règle.
-        Une rule ne peut accorder que <code>actions: [read]</code> —
-        <code>write</code> ou <code>cluster_admin</code> dans le YAML fait
-        échouer le chargement.
+        Declarative policy, <strong>allow rules only</strong>, fail-closed.
+        The proxy refuses to start without at least one rule. A rule can
+        only grant <code>actions: [read]</code> — <code>write</code> or
+        <code>cluster_admin</code> in the YAML makes loading fail.
+        Diagram: <a href="layers/03-authorization.html">Layer 3 · Authorization</a>.
       </p>
 
-      <h3>Correspondance</h3>
+      <h3>Matching</h3>
       <ul>
-        <li>Sujet dans <code>users</code>, <strong>ou</strong> intersection
-          non vide avec <code>groups</code>.</li>
-        <li>Indices : motifs glob (<code>path.Match</code>) sur les noms
-          concrets (aliases résolus d’abord).</li>
-        <li>Indices système (<code>.kibana*</code>, <code>.security*</code>, …)
-          refusés par défaut sauf override <code>system_indices</code>.</li>
-        <li><code>known_groups</code> (optionnel) : un groupe inconnu dans une
-          rule fait échouer le load.</li>
+        <li>Subject in <code>users</code>, <strong>or</strong> non-empty
+          intersection with <code>groups</code>.</li>
+        <li>Indices: glob patterns (<code>path.Match</code>) on concrete
+          names (aliases resolved first).</li>
+        <li>System indices (<code>.kibana*</code>, <code>.security*</code>, …)
+          denied by default unless overridden by <code>system_indices</code>.</li>
+        <li><code>known_groups</code> (optional): an unknown group in a rule
+          makes loading fail.</li>
+        <li><code>teams:</code> adds one read rule per team
+          (<code>team:&lt;name&gt;</code>) for the union of its groups.</li>
       </ul>
 
-      <h3>Classification des requêtes</h3>
+      <h3>Request classification</h3>
       <table>
         <thead>
-          <tr><th>Action</th><th>Quand</th></tr>
+          <tr><th>Action</th><th>When</th></tr>
         </thead>
         <tbody>
           <tr>
             <td><code>cluster_admin</code></td>
-            <td>Préfixes <code>/_cluster</code>, <code>/_security</code>,
+            <td>Prefixes <code>/_cluster</code>, <code>/_security</code>,
               <code>/_nodes</code>, <code>/_license</code>,
               <code>/_snapshot</code>, <code>/_slm</code>,
               <code>/_tasks</code>, <code>/_cat</code></td>
           </tr>
           <tr>
             <td><code>read</code></td>
-            <td>GET/HEAD ; ou POST se terminant par
+            <td>GET/HEAD; or POST ending with
               <code>/_search</code>, <code>/_msearch</code>,
               <code>/_count</code>, <code>/_field_caps</code>,
               <code>/_validate/query</code>, <code>/_async_search</code></td>
           </tr>
           <tr>
             <td><code>write</code></td>
-            <td>Tout le reste</td>
+            <td>Everything else</td>
           </tr>
         </tbody>
       </table>
       <div class="callout deny">
-        Une requête classée <code>write</code> ou <code>cluster_admin</code>
-        est <strong>toujours refusée</strong> par <code>Decide</code>, même si
-        l’index est couvert par une rule.
+        A request classified <code>write</code> or <code>cluster_admin</code>
+        is <strong>always denied</strong> by <code>Decide</code>, even if the
+        index is covered by a rule.
       </div>
 
-      <h3>Conditions optionnelles</h3>
-      <p>Toutes les conditions présentes sur une rule doivent matcher :</p>
+      <h3>ES|QL queries</h3>
+      <p>
+        <code>POST /_query</code> bodies are parsed: every index the query
+        reads (<code>FROM</code>, <code>LOOKUP JOIN</code>, and the source
+        indices of <code>ENRICH</code> policies) must pass the ACL. A query
+        that cannot be parsed with certainty, a remote cluster or an unknown
+        policy is denied.
+      </p>
+
+      <h3>Optional conditions</h3>
+      <p>Every condition set on a rule must match:</p>
       <ul>
-        <li><code>source_ips</code> — IP ou CIDR sur <code>RemoteAddr</code>
-          uniquement (jamais <code>X-Forwarded-For</code>)</li>
-        <li><code>methods</code> — méthodes HTTP</li>
-        <li><code>time</code> — fenêtre UTC <code>from</code>/<code>to</code>
-          (HH:MM) et jours optionnels</li>
+        <li><code>source_ips</code> — IP or CIDR on <code>RemoteAddr</code>
+          only (never <code>X-Forwarded-For</code>)</li>
+        <li><code>methods</code> — HTTP methods</li>
+        <li><code>time</code> — UTC window <code>from</code>/<code>to</code>
+          (HH:MM) and optional days</li>
       </ul>
 
-      <h3>Exemple</h3>
+      <h3>Example</h3>
 <pre><code>acl:
   rules:
     - name: equipe-a-read
@@ -622,56 +723,68 @@
       # methods: [GET, POST]
       # time: { from: "08:00", to: "18:00", days: [Mon, Tue, Wed, Thu, Fri] }</code></pre>
 
-      <h3>Simulation hors ligne</h3>
+      <h3>Offline simulation</h3>
 <pre><code>proxy -config /etc/proxy/proxy.yaml -simulate \
   -subject alice -groups equipe-a-viewer \
   -index equipe-a-sample -action read
 # → allow equipe-a-read</code></pre>
 
       <p>
-        Rechargement à chaud de l’ACL : <code>SIGHUP</code> (revalide toute
-        la config ; en cas d’erreur, l’ancienne politique est conservée).
+        Hot reload of the ACL: <code>SIGHUP</code> (revalidates the whole
+        config; on error, the previous policy is kept).
       </p>
 
-      <!-- ========== RELAIS ========== -->
-      <h2 id="relais">Relais Elasticsearch</h2>
+      <!-- ========== RELAY ========== -->
+      <h2 id="relay">Elasticsearch relay</h2>
+      <p>Diagram: <a href="layers/04-elasticsearch.html">Layer 4 · Elasticsearch</a>.</p>
       <ul>
-        <li><code>run_as_user</code> / <code>run_as_password</code> : compte de
-          service pour l’auth upstream.</li>
-        <li>Après décision ACL positive : en-tête
+        <li><code>run_as_user</code> / <code>run_as_password</code>: service
+          account for upstream authentication.</li>
+        <li>After a positive ACL decision: header
           <code>es-security-runas-user: &lt;subject&gt;</code>.</li>
-        <li><code>api_key</code> : uniquement pour le resolver
-          (<code>/_resolve/index</code>), jamais sur la requête relayée.</li>
-        <li><code>shadow_password</code> : secret native-realm substitué dans
-          <code>POST /_security/profile/_activate</code> après re-vérification
-          du mot de passe LDAP — jamais saisi par l’utilisateur, jamais envoyé
-          à LDAP.</li>
-        <li><code>passthrough_users</code> (défaut <code>kibana_system</code>) :
-          relais inchangé avec les credentials Basic du client, hors ACL.</li>
+        <li><code>api_key</code>: only for the resolver
+          (<code>/_resolve/index</code>, ENRICH policies), never on the relayed request.</li>
+        <li><code>shadow_password</code>: native-realm secret substituted in
+          <code>POST /_security/profile/_activate</code> after re-checking the
+          LDAP password — never typed by the user, never sent to LDAP.</li>
+        <li><code>passthrough_users</code> (default <code>kibana_system</code>):
+          relayed unchanged with the client's Basic credentials, outside the ACL.</li>
       </ul>
+
+      <h3>Ask assistant (milestone 2)</h3>
+      <p>
+        With <code>model:</code> (any chat-completions API),
+        <code>POST /_proxy/ask</code> turns a question into one read-only
+        ES|QL query. The model only sees the fields of indices the caller may
+        read; the query goes through the ES|QL check and runs as the caller,
+        with one correction if it fails. Sending <code>{"esql": …}</code>
+        replays an edited query without the model.
+        Diagram: <a href="layers/05-ai-agent-mcp.html">Layer 5 · AI assistant</a>.
+      </p>
 
       <!-- ========== QUOTAS ========== -->
       <h2 id="quotas">Quotas</h2>
       <p>
-        Section <code>limits</code> optionnelle. Appliqués uniquement sur le
-        handler catch-all (pas sur <code>/health</code>, <code>/metrics</code>,
+        Optional <code>limits</code> section. Applied only on the catch-all
+        handler (not on <code>/health</code>, <code>/metrics</code>,
         <code>/auth/*</code>).
       </p>
       <ul>
         <li><code>max_duration</code>, <code>max_result_bytes</code>,
           <code>requests_per_minute</code></li>
-        <li><code>default</code> pour les appelants sans rôle ; sinon aucun plafond</li>
-        <li><code>roles</code> : groupes disjoints entre entrées ; si plusieurs
-          matchent → minimum de chaque plafond</li>
+        <li><code>default</code> for callers with no role; otherwise no limit</li>
+        <li><code>roles</code>: groups disjoint between entries; if several
+          match → minimum of each limit</li>
       </ul>
 
       <!-- ========== AUDIT ========== -->
-      <h2 id="audit">Audit &amp; métriques</h2>
+      <h2 id="audit">Audit &amp; metrics</h2>
       <h3>Audit</h3>
       <p>
-        Une ligne JSON par requête d’accès sur stdout. Jamais de body, cookie
-        ni en-tête <code>Authorization</code>. <code>/health</code>,
-        <code>/healthz</code> et <code>/metrics</code> ne produisent pas de ligne.
+        One JSON line per access request on stdout. Never a body, cookie
+        or <code>Authorization</code> header. <code>/health</code>,
+        <code>/healthz</code> and <code>/metrics</code> produce no line.
+        Example in context: <a href="layers/06-end-to-end.html">end-to-end scenario</a>.
       </p>
 <pre><code>{
   "ts": "2026-11-09T09:15:00Z",
@@ -687,79 +800,85 @@
   "bytes": 48
 }</code></pre>
 
-      <h3>Métriques Prometheus</h3>
+      <h3>Prometheus metrics</h3>
       <p>
-        <code>GET /metrics</code> — exposition Prometheus, sans authentification
-        (à restreindre au réseau d’ops).
+        <code>GET /metrics</code> — Prometheus exposition, without
+        authentication (restrict it to the ops network).
       </p>
 
       <!-- ========== API ========== -->
-      <h2 id="api">Endpoints HTTP</h2>
+      <h2 id="api">HTTP endpoints</h2>
       <table>
         <thead>
-          <tr><th>Méthode</th><th>Chemin</th><th>Auth</th><th>Description</th></tr>
+          <tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr>
         </thead>
         <tbody>
-          <tr><td>GET</td><td><code>/health</code>, <code>/healthz</code></td><td>Non</td><td>Liveness</td></tr>
-          <tr><td>GET</td><td><code>/metrics</code></td><td>Non</td><td>Prometheus</td></tr>
-          <tr><td>GET</td><td><code>/auth/me</code></td><td>Session / JWT</td><td>Identité courante</td></tr>
-          <tr><td>GET</td><td><code>/auth/login</code></td><td>—</td><td>Démarrage OIDC</td></tr>
-          <tr><td>GET</td><td><code>/auth/callback</code></td><td>—</td><td>Callback OIDC</td></tr>
-          <tr><td>POST</td><td><code>/auth/ldap</code></td><td>—</td><td>Login LDAP</td></tr>
-          <tr><td>GET/POST</td><td><code>/auth/kibana</code></td><td>—</td><td>Formulaire LDAP ou Negotiate → session Kibana</td></tr>
-          <tr><td>*</td><td><code>/</code> (catch-all)</td><td>Oui</td><td>Relais Elasticsearch</td></tr>
+          <tr><td>GET</td><td><code>/health</code>, <code>/healthz</code></td><td>No</td><td>Liveness</td></tr>
+          <tr><td>GET</td><td><code>/metrics</code></td><td>No</td><td>Prometheus</td></tr>
+          <tr><td>GET</td><td><code>/auth/me</code></td><td>Session / JWT</td><td>Current identity</td></tr>
+          <tr><td>GET</td><td><code>/auth/login</code></td><td>—</td><td>Start OIDC</td></tr>
+          <tr><td>GET</td><td><code>/auth/callback</code></td><td>—</td><td>OIDC callback</td></tr>
+          <tr><td>POST</td><td><code>/auth/ldap</code></td><td>—</td><td>LDAP login</td></tr>
+          <tr><td>GET/POST</td><td><code>/auth/kibana</code></td><td>—</td><td>LDAP form or Negotiate → Kibana session</td></tr>
+          <tr><td>GET</td><td><code>/identity/jwks</code></td><td>No</td><td>Public keys of identity tokens</td></tr>
+          <tr><td>POST</td><td><code>/_proxy/identity-token</code></td><td>Yes</td><td>Short identity JWT for the engine</td></tr>
+          <tr><td>POST</td><td><code>/_proxy/ask</code></td><td>Yes</td><td>Ask assistant</td></tr>
+          <tr><td>*</td><td><code>/</code> (catch-all)</td><td>Yes</td><td>Elasticsearch relay</td></tr>
         </tbody>
       </table>
 
       <!-- ========== CONFIG ========== -->
       <h2 id="configuration">Configuration</h2>
       <p>
-        Fichier YAML unique (défaut <code>./configs/proxy.yaml</code>,
-        flag <code>-config</code>). Les secrets sont des
-        <strong>références</strong>, jamais des littéraux :
+        A single YAML file (default <code>./configs/proxy.yaml</code>,
+        <code>-config</code> flag). Secrets are
+        <strong>references</strong>, never literals:
       </p>
       <ul>
-        <li><code>${env:NAME}</code> — variable d’environnement</li>
-        <li><code>${file:/path}</code> — contenu d’un fichier (secret monté)</li>
+        <li><code>${env:NAME}</code> — environment variable</li>
+        <li><code>${file:/path}</code> — file content (mounted secret)</li>
       </ul>
       <div class="callout warn">
-        Toujours <strong>citer</strong> les références :
-        YAML traite un <code>{...}</code> non quoté comme un flow mapping.
+        Always <strong>quote</strong> references:
+        YAML treats an unquoted <code>{...}</code> as a flow mapping.
       </div>
 
-      <h3>Référence des sections</h3>
+      <h3>Section reference</h3>
       <table>
         <thead>
-          <tr><th>Section</th><th>Obligatoire</th><th>Notes</th></tr>
+          <tr><th>Section</th><th>Required</th><th>Notes</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>listen</code></td><td>Oui</td><td>Ex. <code>":8080"</code></td></tr>
-          <tr><td><code>elasticsearch</code></td><td>Oui</td><td>URL, api_key, run_as_*, shadow_password</td></tr>
-          <tr><td><code>acl</code></td><td>Oui</td><td>≥ 1 rule, actions read uniquement</td></tr>
-          <tr><td><code>session</code></td><td>Si OIDC/LDAP/Kerberos</td><td>secret ≥ 32 octets, ttl</td></tr>
-          <tr><td><code>oidc</code></td><td>Non</td><td>Omettre pour désactiver</td></tr>
-          <tr><td><code>ldap</code></td><td>Non</td><td>Omettre pour désactiver</td></tr>
-          <tr><td><code>jwt</code></td><td>Non</td><td>M2M Bearer</td></tr>
-          <tr><td><code>kerberos</code></td><td>Non</td><td>Keytab binaire monté (pas <code>${file:}</code>)</td></tr>
-          <tr><td><code>kibana</code></td><td>Non</td><td>Pont SSO ; requiert ldap</td></tr>
-          <tr><td><code>limits</code></td><td>Non</td><td>Quotas par rôle</td></tr>
+          <tr><td><code>listen</code></td><td>Yes</td><td>E.g. <code>":8080"</code></td></tr>
+          <tr><td><code>elasticsearch</code></td><td>Yes</td><td>URL, api_key, run_as_*, shadow_password</td></tr>
+          <tr><td><code>acl</code></td><td>Yes</td><td>≥ 1 rule, read actions only</td></tr>
+          <tr><td><code>session</code></td><td>If OIDC/LDAP/Kerberos</td><td>secret ≥ 32 bytes, ttl</td></tr>
+          <tr><td><code>oidc</code></td><td>No</td><td>Omit to disable</td></tr>
+          <tr><td><code>ldap</code></td><td>No</td><td>Omit to disable</td></tr>
+          <tr><td><code>jwt</code></td><td>No</td><td>M2M Bearer</td></tr>
+          <tr><td><code>kerberos</code></td><td>No</td><td>Mounted binary keytab (not <code>${file:}</code>)</td></tr>
+          <tr><td><code>kibana</code></td><td>No</td><td>SSO bridge (requires ldap) and team sync</td></tr>
+          <tr><td><code>teams</code></td><td>No</td><td>Team indices, space and viewer/editor/admin groups</td></tr>
+          <tr><td><code>limits</code></td><td>No</td><td>Per-role quotas</td></tr>
+          <tr><td><code>identity_token</code></td><td>No</td><td>Issuer, audience, ttl, signing keys</td></tr>
+          <tr><td><code>model</code></td><td>No</td><td>Chat-completions URL, API key, model name for Ask</td></tr>
         </tbody>
       </table>
       <p>
-        Exemple complet annoté :
+        Full annotated example:
         <code>configs/proxy.example.yaml</code>.
-        Variante systemd (secrets fichiers) :
+        systemd variant (file secrets):
         <code>deploy/systemd/proxy.yaml</code>.
       </p>
 
-      <!-- ========== DEPLOIEMENT ========== -->
-      <h2 id="deploiement">Déploiement</h2>
+      <!-- ========== DEPLOYMENT ========== -->
+      <h2 id="deployment">Deployment</h2>
 
-      <h3>Image Docker</h3>
+      <h3>Docker image</h3>
       <p>
-        Image produit seule (pas de compose de démo embarqué). Config 100 %
-        fichier : monter le YAML en lecture seule, passer les secrets en
-        variables d’environnement. Utilisateur non-root (uid 65532).
+        Product image only (no demo compose inside). 100% file-based
+        config: mount the YAML read-only, pass secrets as environment
+        variables. Non-root user (uid 65532).
       </p>
 <pre><code>docker build -t proxy-elk .
 docker run --rm -p 8080:8080 \
@@ -770,37 +889,36 @@ docker run --rm -p 8080:8080 \
 curl -sf localhost:8080/health
 curl -sf localhost:8080/metrics | head</code></pre>
 
-      <h3>Binaire + systemd</h3>
+      <h3>Binary + systemd</h3>
       <p>
-        Releases : archives <code>proxy-elk_&lt;version&gt;_linux_{amd64,arm64}.tar.gz</code>
-        + <code>SHA256SUMS</code> (binaire, unit, YAML d’exemple,
+        Releases: <code>proxy-elk_&lt;version&gt;_linux_{amd64,arm64}.tar.gz</code>
+        archives + <code>SHA256SUMS</code> (binary, unit, example YAML,
         <code>install.sh</code>).
       </p>
-<pre><code># En root, depuis le répertoire décompressé de l’archive :
+<pre><code># As root, from the unpacked archive directory:
 ./install.sh
-# → crée l’utilisateur système proxy, /etc/proxy, /etc/proxy/secrets
-# Éditer /etc/proxy/proxy.yaml, créer les secrets (root:proxy 0640), puis :
+# → creates the proxy system user, /etc/proxy, /etc/proxy/secrets
+# Edit /etc/proxy/proxy.yaml, create the secrets (root:proxy 0640), then:
 systemctl enable --now proxy-elk</code></pre>
       <p>
-        Relances ultérieures de <code>install.sh</code> : remplacent le
-        binaire + l’unit et redémarrent le service ; <code>/etc/proxy</code>
-        est préservé.
+        Later runs of <code>install.sh</code> replace the binary and the
+        unit and restart the service; <code>/etc/proxy</code> is preserved.
       </p>
-      <p>Durcissement unit : <code>NoNewPrivileges</code>,
+      <p>Unit hardening: <code>NoNewPrivileges</code>,
         <code>ProtectSystem=strict</code>, <code>ProtectHome</code>,
         <code>PrivateTmp</code>.</p>
 
-      <h3>Build local des archives</h3>
+      <h3>Building the archives locally</h3>
 <pre><code>VERSION=v1.2.3 make release
 # → dist/proxy-elk_v1.2.3_linux_amd64.tar.gz
 # → dist/proxy-elk_v1.2.3_linux_arm64.tar.gz
 # → dist/SHA256SUMS</code></pre>
 
       <!-- ========== DEMO ========== -->
-      <h2 id="demo">Démo locale</h2>
+      <h2 id="demo">Local demo</h2>
       <p>
-        Stack complète sous <code>deploy/demo/</code> (dérivée de
-        <code>spike/</code>, sans le modifier) :
+        Full stack under <code>deploy/demo/</code> (derived from
+        <code>spike/</code>, without modifying it):
       </p>
 <pre><code>cd deploy/demo
 cp .env.example .env
@@ -811,27 +929,27 @@ docker compose up -d
       <h3>Services</h3>
       <table>
         <thead>
-          <tr><th>Service</th><th>Rôle</th></tr>
+          <tr><th>Service</th><th>Role</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>elasticsearch</code></td><td>Cluster single-node, réseau <code>es</code> interne uniquement</td></tr>
-          <tr><td><code>proxy</code></td><td>Image produit — seul chemin Kibana → ES</td></tr>
-          <tr><td><code>kibana</code></td><td>8.19 + plugin spike_ask</td></tr>
-          <tr><td><code>openldap</code></td><td>Annuaire de test (alice / bob / carol)</td></tr>
-          <tr><td><code>keycloak</code></td><td>IdP OIDC, realm <code>demo</code></td></tr>
+          <tr><td><code>elasticsearch</code></td><td>Single-node cluster, internal <code>es</code> network only</td></tr>
+          <tr><td><code>proxy</code></td><td>Product image — the only Kibana → ES path</td></tr>
+          <tr><td><code>kibana</code></td><td>8.19 + spike_ask plugin</td></tr>
+          <tr><td><code>openldap</code></td><td>Test directory (alice / bob / carol)</td></tr>
+          <tr><td><code>keycloak</code></td><td>OIDC IdP, <code>demo</code> realm</td></tr>
           <tr><td><code>kdc</code> / <code>krb5-user</code></td><td>Kerberos SPNEGO</td></tr>
         </tbody>
       </table>
 
-      <h3>Réseaux</h3>
+      <h3>Networks</h3>
       <ul>
-        <li><code>es</code> (<code>internal: true</code>) : Elasticsearch,
-          proxy, jobs one-shot.</li>
-        <li><code>demo</code> : ports hôte (Kibana, LDAP, Keycloak, proxy).</li>
+        <li><code>es</code> (<code>internal: true</code>): Elasticsearch,
+          proxy, one-shot jobs.</li>
+        <li><code>demo</code>: host ports (Kibana, LDAP, Keycloak, proxy).</li>
       </ul>
       <p>
-        Contrôle : <code>curl http://127.0.0.1:9200</code> doit refuser la
-        connexion. Seul <code>127.0.0.1:8081</code> (proxy) mène à ES.
+        Check: <code>curl http://127.0.0.1:9200</code> must refuse the
+        connection. Only <code>127.0.0.1:8081</code> (proxy) leads to ES.
       </p>
 
       <h3>Ports (127.0.0.1)</h3>
@@ -843,13 +961,13 @@ docker compose up -d
           <tr><td>5601</td><td>Kibana</td></tr>
           <tr><td>1389 / 1636</td><td>OpenLDAP (plain / LDAPS)</td></tr>
           <tr><td>18080</td><td>Keycloak</td></tr>
-          <tr><td>8081</td><td>Proxy (produit)</td></tr>
+          <tr><td>8081</td><td>Proxy (product)</td></tr>
         </tbody>
       </table>
 
-      <h3>Login interactif OIDC</h3>
+      <h3>Interactive OIDC login</h3>
 <pre><code>echo "127.0.0.1 keycloak" | sudo tee -a /etc/hosts
-# puis http://127.0.0.1:8081/auth/login</code></pre>
+# then http://127.0.0.1:8081/auth/login</code></pre>
 
       <!-- ========== CLI ========== -->
       <h2 id="cli">CLI</h2>
@@ -858,50 +976,50 @@ proxy -config /etc/proxy/proxy.yaml
 proxy -config ... -simulate \
   -subject alice -groups equipe-a-viewer \
   -index equipe-a-sample -action read \
-  [-ip 10.0.0.1] [-method GET] [-time 2026-11-09T10:00:00Z]</code></pre>
+  [-ip 10.0.0.1] [-method GET] [-time 2026-11-09T10:00:00Z]
+proxy -config ... -sync [-dry-run]   # Kibana spaces and roles per team</code></pre>
       <p>
-        Au démarrage, la config redacted est écrite sur stdout (JSON) ;
-        « listening on … » sur stderr.
+        At startup, the redacted config is written to stdout (JSON);
+        “listening on …” goes to stderr.
       </p>
 
-      <!-- ========== SECURITE ========== -->
-      <h2 id="securite">Sécurité</h2>
+      <!-- ========== SECURITY ========== -->
+      <h2 id="security">Security</h2>
       <div class="callout deny">
-        <strong>Ne pas ouvrir d’issue publique</strong> pour une faille de
-        sécurité. Utiliser l’onglet Security GitHub (« Report a vulnerability »)
-        ou l’email indiqué dans <code>SECURITY.md</code> (objet
+        <strong>Do not open a public issue</strong> for a security
+        vulnerability. Use the GitHub Security tab (“Report a vulnerability”)
+        or the email given in <code>SECURITY.md</code> (subject
         <code>[SECURITY] …</code>).
       </div>
-      <p>Exemples de failles dans le périmètre :</p>
+      <p>Examples of in-scope vulnerabilities:</p>
       <ul>
-        <li>Contournement auth / ACL (aliases, wildcards, indices système)</li>
-        <li>Accès à Elasticsearch sans passer par le proxy</li>
-        <li>Injection (LDAP, ES|QL, prompt) permettant lecture/écriture non autorisée</li>
-        <li>Fuite de secrets dans logs ou audit</li>
-        <li>Usurpation via tokens (JWT, en-têtes d’identité)</li>
+        <li>Auth / ACL bypass (aliases, wildcards, system indices)</li>
+        <li>Access to Elasticsearch without going through the proxy</li>
+        <li>Injection (LDAP, ES|QL, prompt) allowing unauthorized reads/writes</li>
+        <li>Secrets leaking into logs or audit</li>
+        <li>Impersonation through tokens (JWT, identity headers)</li>
       </ul>
       <p>
-        Accusé de réception sous 7 jours (engagement de bonne foi, pas un
-        contrat de service). Divulgation coordonnée.
+        Acknowledgement within 7 days (a good-faith commitment, not a
+        service contract). Coordinated disclosure.
       </p>
 
-      <!-- ========== CONTRIBUER ========== -->
-      <h2 id="contribuer">Contribuer</h2>
+      <!-- ========== CONTRIBUTING ========== -->
+      <h2 id="contributing">Contributing</h2>
       <p>
-        Le projet n’accepte pas encore de contributions externes. Quand ce
-        sera le cas : chaque commit porte une ligne
-        <code>Signed-off-by</code> sous le
-        <a href="https://developercertificate.org/">DCO 1.1</a>, et les
-        messages suivent
+        The project does not accept external contributions yet. When it
+        does: each commit carries a <code>Signed-off-by</code> line under the
+        <a href="https://developercertificate.org/">DCO 1.1</a>, and messages
+        follow
         <a href="https://www.conventionalcommits.org/">Conventional Commits</a>.
       </p>
 <pre><code>git config core.hooksPath .githooks</code></pre>
-      <p>Licence : <strong>Apache-2.0</strong>.</p>
+      <p>License: <strong>Apache-2.0</strong>.</p>
 
       <footer>
-        Documentation HTML destinée au wiki GitHub —
-        générée à partir du dépôt <code>proxy-elk</code> (branche de doc).
-        Sources de vérité : <code>README.md</code>,
+        HTML documentation published with GitHub Pages from the
+        <code>proxy-elk</code> repository (<code>docs/wiki</code>).
+        Sources of truth: <code>README.md</code>,
         <code>configs/proxy.example.yaml</code>,
         <code>deploy/demo/README.md</code>, <code>SECURITY.md</code>.
       </footer>
