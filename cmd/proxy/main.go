@@ -464,11 +464,13 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 	}
 	resolver := acl.NewESResolver(cfg.Elasticsearch.URL, cfg.Elasticsearch.APIKey)
 	enrich := &esql.EnrichClient{URL: cfg.Elasticsearch.URL, APIKey: cfg.Elasticsearch.APIKey}
+	accessLog := audit.New(os.Stdout, cfg.Mask)
 	mux.Handle("/", es.NewRelay(es.Config{
 		Ask: &ask.Handler{
 			Target: target, Policy: policy, Resolver: resolver, Enrich: enrich,
 			RunAsUser: cfg.Elasticsearch.RunAsUser, RunAsPassword: cfg.Elasticsearch.RunAsPassword,
 			ModelURL: cfg.Model.URL, ModelKey: cfg.Model.APIKey, ModelName: cfg.Model.Name,
+			Audit: accessLog,
 		},
 		IdentityTokens: idIssuer,
 		Target:         target,
@@ -488,7 +490,7 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 		Passthrough:    passthrough,
 	}))
 
-	return audit.New(os.Stdout, cfg.Mask).Handler(sessions, jwtVerifier, mux), nil
+	return accessLog.Handler(sessions, jwtVerifier, mux), nil
 }
 
 // sessionOnSuccess issues the shared session cookie and redirects to

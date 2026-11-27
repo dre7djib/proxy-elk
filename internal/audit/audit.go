@@ -50,6 +50,10 @@ type Record struct {
 	Status     int         `json:"status"`
 	DurationMS int64       `json:"duration_ms"`
 	Bytes      int         `json:"bytes"`
+	// Query and Rows are set by the Ask tool loop, one line per run_esql.
+	// Empty on ordinary HTTP lines. Rows is the count before truncation.
+	Query string `json:"query,omitempty"`
+	Rows  int    `json:"rows,omitempty"`
 }
 
 // Logger writes Records as single JSON lines, serialized by the

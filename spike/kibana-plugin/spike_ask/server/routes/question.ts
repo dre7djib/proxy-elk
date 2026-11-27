@@ -1,9 +1,8 @@
 import type { IRouter, Logger } from '@kbn/core/server';
 import { schema } from '@kbn/config-schema';
 
-// POST /api/spike_ask/question: relays a question (or an edited ES|QL query)
-// to the proxy's POST /_proxy/ask as the current user. The model key and the
-// ES|QL run both live in the proxy; nothing sensitive is held here.
+// POST /api/spike_ask/question: relays a question to the proxy's POST /_proxy/ask
+// as the current user. The model key and the tool loop both live in the proxy.
 export function registerQuestionRoute(router: IRouter, deps: { logger: Logger }): void {
   router.post(
     {
@@ -11,7 +10,6 @@ export function registerQuestionRoute(router: IRouter, deps: { logger: Logger })
       validate: {
         body: schema.object({
           question: schema.maybe(schema.string()),
-          esql: schema.maybe(schema.string()),
         }),
       },
     },
