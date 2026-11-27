@@ -9,6 +9,12 @@ spike/.env
 
 dist/
 
-docs/
+# Only the wiki under docs/ is versioned (published by GitHub Pages).
+docs/*
+!docs/wiki/
+docs/wiki/layers/*.delivery.json
+
+# Archify working folders
+.archify/
 
 deploy/demo/.env

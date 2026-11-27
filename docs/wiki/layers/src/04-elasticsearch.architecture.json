@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Layer 4 · Elasticsearch: who reaches it, and with which credentials",
+    "locale": "en",
+    "output": "docs/wiki/layers/04-elasticsearch.html",
+    "quality_profile": "showcase",
+    "parentHref": "index.html",
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    }
+  },
+  "layout": { "mode": "auto" },
+  "components": [
+    {
+      "id": "kibana", "type": "frontend", "label": "Kibana", "sublabel": "demo network only",
+      "explanation": "In the demo, Kibana is not on the internal Elasticsearch network: its ELASTICSEARCH_HOSTS points at the proxy.",
+      "sources": [{ "path": "deploy/demo/docker-compose.yml", "label": "networks" }]
+    },
+    {
+      "id": "relay", "type": "security", "label": "proxy relay", "sublabel": "auth → quotas → ACL",
+      "href": "03-authorization.html",
+      "sources": [{ "path": "internal/es/relay.go", "label": "relay" }]
+    },
+    {
+      "id": "ask", "type": "backend", "label": "Ask assistant", "sublabel": "schema + ES|QL",
+      "href": "05-ai-agent-mcp.html",
+      "sources": [{ "path": "internal/ask/ask.go", "label": "Ask" }]
+    },
+    {
+      "id": "lookup", "type": "backend", "label": "Index & ENRICH lookup", "sublabel": "API key, never the user",
+      "explanation": "GET /_resolve/index turns aliases and wildcards into concrete names; GET /_enrich/policy finds the source indices of an ENRICH policy. Both use the proxy's API key.",
+      "sources": [{ "path": "internal/acl/resolve.go", "label": "ESResolver" }, { "path": "internal/esql/enrich.go", "label": "EnrichClient" }]
+    },
+    {
+      "id": "data", "type": "database", "label": "Team indices", "sublabel": "equipe-a-*, shared-ref…",
+      "explanation": "Read as the end user: the relay authenticates as proxy_service and sets es-security-runas-user, so Elasticsearch applies that user's own roles too."
+    },
+    {
+      "id": "system", "type": "database", "label": "System indices", "sublabel": ".kibana*, .security*…",
+      "explanation": "Refused to every user unless a rule names them explicitly. Kibana's kibana_system account reaches them as a passthrough user."
+    },
+    {
+      "id": "realm", "type": "security", "label": "Native realm", "sublabel": "proxy_service · shadow users",
+      "explanation": "proxy_service holds only a run_as role. Each LDAP user has a native shadow user whose password is a secret shared by the proxy and the bootstrap only, so Kibana's profile activation works without the real LDAP password.",
+      "sources": [{ "path": "deploy/demo/scripts/es-bootstrap.sh", "label": "bootstrap" }, { "path": "internal/es/activate.go", "label": "activate" }]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Elasticsearch 8.19, internal network only", "wraps": ["data", "system", "realm"] }
+  ],
+  "connections": [
+    { "id": "kbn-relay", "from": "kibana", "to": "relay", "label": "all ES calls", "variant": "emphasis" },
+    { "id": "relay-data", "from": "relay", "to": "data", "label": "run_as caller", "variant": "emphasis" },
+    { "id": "relay-system", "from": "relay", "to": "system", "label": "kibana_system, unchanged", "variant": "dashed" },
+    { "id": "relay-realm", "from": "relay", "to": "realm", "label": "activate, shadow pwd", "variant": "security" },
+    { "id": "relay-ask", "from": "relay", "to": "ask", "label": "/_proxy/ask" },
+    { "id": "ask-data", "from": "ask", "to": "data", "label": "_mapping, _query as caller" },
+    { "id": "relay-lookup", "from": "relay", "to": "lookup", "label": "resolve names" },
+    { "id": "lookup-data", "from": "lookup", "to": "data", "label": "names only, API key", "variant": "security" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Three credentials, three jobs",
+      "items": [
+        "proxy_service (run_as): reads data as the caller",
+        "API key: resolves index names and ENRICH policies",
+        "kibana_system: Kibana's own system indices, outside the ACL"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "No way around the proxy",
+      "items": [
+        "Elasticsearch sits on an internal Docker network",
+        "Users' credentials are never forwarded to Elasticsearch",
+        "Kubernetes NetworkPolicy: planned with the Helm chart"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Planned (J2)",
+      "items": [
+        "Hidden index proxy-conversations: one doc per conversation, one per message",
+        "Written only by the proxy; result rows never stored",
+        "ILM retention, 90 days by default"
+      ]
+    }
+  ]
+}

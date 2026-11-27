@@ -320,6 +320,7 @@
           <li><a href="#principes">Principes</a></li>
           <li><a href="#roadmap">Roadmap</a></li>
           <li><a href="#architecture">Architecture</a></li>
+          <li><a href="layers/index.html">Couche par couche (diagrammes)</a></li>
           <li class="group">Fonctionnel</li>
           <li><a href="#authentification">Authentification</a></li>
           <li><a href="#acl">ACL</a></li>
@@ -434,6 +435,12 @@
         HTTP, authentifie l’appelant, décide via l’ACL, puis relaie vers
         Elasticsearch. Kibana ne parle jamais directement au cluster ES :
         dans la démo, ES n’a même pas de port exposé sur l’hôte.
+      </p>
+      <p>
+        Pour suivre le fonctionnement couche par couche, voir les
+        <a href="layers/index.html">diagrammes interactifs</a> (en anglais) :
+        Kibana et Ask, authentification, autorisation, Elasticsearch,
+        assistant IA, puis un scénario de bout en bout.
       </p>
 
       <div class="flow"><span class="hl">Client / Kibana</span>

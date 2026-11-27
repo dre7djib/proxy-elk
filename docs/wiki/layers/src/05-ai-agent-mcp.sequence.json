@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Layer 5 · AI assistant: one question through /_proxy/ask",
+    "locale": "en",
+    "output": "docs/wiki/layers/05-ai-agent-mcp.html",
+    "quality_profile": "showcase",
+    "parentHref": "index.html",
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    },
+    "legend": {
+      "entries": {
+        "dashed": {
+          "label": "correction"
+        }
+      }
+    }
+  },
+  "participants": [
+    {
+      "id": "kibana",
+      "type": "frontend",
+      "label": "Kibana plugin",
+      "sublabel": "asCurrentUser",
+      "sources": [
+        {
+          "path": "spike/kibana-plugin/spike_ask/server/routes/question.ts",
+          "label": "question route"
+        }
+      ]
+    },
+    {
+      "id": "relay",
+      "type": "security",
+      "label": "proxy relay",
+      "sublabel": "auth + quotas",
+      "href": "03-authorization.html",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "Ask route"
+        }
+      ]
+    },
+    {
+      "id": "ask",
+      "type": "backend",
+      "label": "Ask handler",
+      "sublabel": "internal/ask",
+      "sources": [
+        {
+          "path": "internal/ask/ask.go",
+          "label": "Handler.Serve"
+        }
+      ]
+    },
+    {
+      "id": "acl",
+      "type": "security",
+      "label": "ACL + ES|QL guard",
+      "sublabel": "fail-closed",
+      "sources": [
+        {
+          "path": "internal/acl/decide.go",
+          "label": "Decide"
+        },
+        {
+          "path": "internal/esql/allow.go",
+          "label": "esql.Allow"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LLM provider",
+      "sublabel": "chat-completions"
+    },
+    {
+      "id": "es",
+      "type": "database",
+      "label": "Elasticsearch",
+      "sublabel": "run_as caller",
+      "href": "04-elasticsearch.html"
+    }
+  ],
+  "segments": [
+    {
+      "from": 140,
+      "to": 200,
+      "label": "Who is asking"
+    },
+    {
+      "from": 210,
+      "to": 345,
+      "label": "Schema of readable indices only"
+    },
+    {
+      "from": 355,
+      "to": 440,
+      "label": "Model writes one query"
+    },
+    {
+      "from": 448,
+      "to": 600,
+      "label": "Check, run, correct once"
+    }
+  ],
+  "messages": [
+    {
+      "id": "post",
+      "from": "kibana",
+      "to": "relay",
+      "y": 160,
+      "label": "POST /_proxy/ask {question}",
+      "variant": "emphasis"
+    },
+    {
+      "id": "identity",
+      "from": "relay",
+      "to": "ask",
+      "y": 188,
+      "label": "caller identity",
+      "variant": "default"
+    },
+    {
+      "id": "list",
+      "from": "ask",
+      "to": "es",
+      "y": 225,
+      "label": "resolve * (API key)",
+      "variant": "default"
+    },
+    {
+      "id": "filter",
+      "from": "ask",
+      "to": "acl",
+      "y": 255,
+      "label": "Decide read, per index",
+      "variant": "security",
+      "note": "no readable index: the model is never called"
+    },
+    {
+      "id": "mapping",
+      "from": "ask",
+      "to": "es",
+      "y": 300,
+      "label": "_mapping as caller",
+      "variant": "default"
+    },
+    {
+      "id": "fields",
+      "from": "es",
+      "to": "ask",
+      "y": 328,
+      "label": "fields (max 500)",
+      "variant": "return"
+    },
+    {
+      "id": "prompt",
+      "from": "ask",
+      "to": "llm",
+      "y": 370,
+      "label": "schema + question",
+      "variant": "emphasis",
+      "note": "schema and question are data, never instructions"
+    },
+    {
+      "id": "query",
+      "from": "llm",
+      "to": "ask",
+      "y": 428,
+      "label": "{esql, explanation}",
+      "variant": "return"
+    },
+    {
+      "id": "guard",
+      "from": "ask",
+      "to": "acl",
+      "y": 458,
+      "label": "every index the query reads",
+      "variant": "security",
+      "note": "FROM, LOOKUP JOIN, ENRICH; uncertain = deny"
+    },
+    {
+      "id": "run",
+      "from": "ask",
+      "to": "es",
+      "y": 508,
+      "label": "POST /_query as caller",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rows",
+      "from": "es",
+      "to": "ask",
+      "y": 536,
+      "label": "columns + values",
+      "variant": "return"
+    },
+    {
+      "id": "retry",
+      "from": "ask",
+      "to": "llm",
+      "y": 566,
+      "label": "error → one correction",
+      "variant": "dashed",
+      "note": "only if refused or rejected; checked again"
+    },
+    {
+      "id": "answer",
+      "from": "ask",
+      "to": "kibana",
+      "y": 620,
+      "label": "esql + explanation + table",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "relay",
+      "from": 160,
+      "to": 188
+    },
+    {
+      "participant": "ask",
+      "from": 188,
+      "to": 620
+    },
+    {
+      "participant": "llm",
+      "from": 370,
+      "to": 428
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What runs today",
+      "items": [
+        "One question → one read-only ES|QL query → one table",
+        "The model only sees fields of indices the caller may read",
+        "Sending {esql} instead replays an edited query without the model"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Planned agent (J2)",
+      "items": [
+        "Multi-turn chat with a bounded loop of tool calls",
+        "Deterministic hooks before and after each call: ACL, read-only, limits, audit",
+        "A hook can restrict or deny, never widen the user's rights"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Planned MCP and log analysis (J3)",
+      "items": [
+        "MCP server over HTTP, personal tokens, same tools and hooks, audit source \"mcp\"",
+        "Analyse one log with its context (trace.id, host, service)",
+        "Field masking and a local model for sensitive indices"
+      ]
+    }
+  ]
+}
