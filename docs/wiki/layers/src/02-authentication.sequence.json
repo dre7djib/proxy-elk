@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Layer 2 · Authentication: LDAP login into Kibana",
+    "locale": "en",
+    "output": "docs/wiki/layers/02-authentication.html",
+    "quality_profile": "showcase",
+    "parentHref": "index.html",
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    }
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Browser",
+      "sublabel": "Dev / SRE"
+    },
+    {
+      "id": "sso",
+      "type": "security",
+      "label": "proxy /auth/kibana",
+      "sublabel": "login form",
+      "sources": [
+        {
+          "path": "internal/proxy/kibana_sso.go",
+          "label": "KibanaSSOLogin"
+        }
+      ]
+    },
+    {
+      "id": "ldap",
+      "type": "external",
+      "label": "LDAP / AD",
+      "sublabel": "LDAPS / StartTLS",
+      "sources": [
+        {
+          "path": "internal/auth/ldap.go",
+          "label": "search-then-bind"
+        }
+      ]
+    },
+    {
+      "id": "kibana",
+      "type": "frontend",
+      "label": "Kibana",
+      "sublabel": "basic provider"
+    },
+    {
+      "id": "relay",
+      "type": "security",
+      "label": "proxy relay",
+      "sublabel": "every ES call",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "auth order"
+        },
+        {
+          "path": "internal/es/activate.go",
+          "label": "profile activate"
+        },
+        {
+          "path": "internal/es/bindcache.go",
+          "label": "bind cache"
+        }
+      ]
+    },
+    {
+      "id": "es",
+      "type": "database",
+      "label": "Elasticsearch",
+      "sublabel": "run_as target"
+    }
+  ],
+  "segments": [
+    {
+      "from": 140,
+      "to": 250,
+      "label": "Check the password once"
+    },
+    {
+      "from": 265,
+      "to": 520,
+      "label": "Log into Kibana on the user's behalf"
+    },
+    {
+      "from": 535,
+      "to": 605,
+      "label": "Every later request"
+    }
+  ],
+  "messages": [
+    {
+      "id": "submit",
+      "from": "user",
+      "to": "sso",
+      "y": 160,
+      "label": "POST username + password",
+      "variant": "emphasis",
+      "note": "lockout per (user, IP) after repeated failures"
+    },
+    {
+      "id": "bind",
+      "from": "sso",
+      "to": "ldap",
+      "y": 205,
+      "label": "search DN, bind as user",
+      "variant": "security"
+    },
+    {
+      "id": "groups",
+      "from": "ldap",
+      "to": "sso",
+      "y": 235,
+      "label": "groups (nested, cached)",
+      "variant": "return"
+    },
+    {
+      "id": "kbn-login",
+      "from": "sso",
+      "to": "kibana",
+      "y": 285,
+      "label": "POST /internal/security/login",
+      "variant": "emphasis",
+      "note": "server-side, same verified password"
+    },
+    {
+      "id": "authenticate",
+      "from": "kibana",
+      "to": "relay",
+      "y": 330,
+      "label": "_authenticate (Basic)",
+      "variant": "default",
+      "note": "LDAP bind served from a 1 min cache"
+    },
+    {
+      "id": "runas-auth",
+      "from": "relay",
+      "to": "es",
+      "y": 375,
+      "label": "run_as user",
+      "variant": "security"
+    },
+    {
+      "id": "activate",
+      "from": "kibana",
+      "to": "relay",
+      "y": 405,
+      "label": "profile/_activate (kibana_system)",
+      "variant": "default",
+      "note": "password re-checked, then swapped for the shadow password"
+    },
+    {
+      "id": "activate-es",
+      "from": "relay",
+      "to": "es",
+      "y": 450,
+      "label": "activate, shadow password",
+      "variant": "security"
+    },
+    {
+      "id": "kbn-cookie",
+      "from": "kibana",
+      "to": "sso",
+      "y": 478,
+      "label": "Kibana session cookie",
+      "variant": "return"
+    },
+    {
+      "id": "redirect",
+      "from": "sso",
+      "to": "user",
+      "y": 505,
+      "label": "proxy session + redirect",
+      "variant": "return",
+      "note": "HMAC-signed cookie, 8 h, no password inside"
+    },
+    {
+      "id": "later",
+      "from": "kibana",
+      "to": "relay",
+      "y": 550,
+      "label": "ES call as the user",
+      "variant": "emphasis"
+    },
+    {
+      "id": "later-es",
+      "from": "relay",
+      "to": "es",
+      "y": 578,
+      "label": "run_as user",
+      "variant": "security",
+      "note": "only after quotas and ACL (layer 3)"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "sso",
+      "from": 160,
+      "to": 505
+    },
+    {
+      "participant": "ldap",
+      "from": 205,
+      "to": 235
+    },
+    {
+      "participant": "kibana",
+      "from": 285,
+      "to": 478
+    },
+    {
+      "participant": "relay",
+      "from": 330,
+      "to": 450
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Other ways in",
+      "items": [
+        "OIDC: /auth/login → IdP → /auth/callback, claims mapped to groups",
+        "Kerberos: GET /auth/kibana answers SPNEGO Negotiate, groups looked up in LDAP",
+        "Machines: Bearer JWT issued by an external IdP, verified with its JWKS"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "One identity",
+      "items": [
+        "Every method yields the same identity: subject + groups",
+        "The ACL never knows which method was used",
+        "Plain LDAP is refused unless an explicit dev option is set"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Secrets",
+      "items": [
+        "YAML holds references only: ${env:NAME} or ${file:/path}",
+        "Missing secret: the proxy refuses to start",
+        "Secrets never reach logs or audit"
+      ]
+    }
+  ]
+}

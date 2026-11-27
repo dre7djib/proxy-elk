@@ -1,0 +1,311 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Layer 3 · Authorization: how one request is decided",
+    "locale": "en",
+    "output": "docs/wiki/layers/03-authorization.html",
+    "quality_profile": "showcase",
+    "parentHref": "index.html",
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    },
+    "legend": {
+      "entries": {
+        "external": {
+          "label": "Caller"
+        },
+        "backend": {
+          "label": "Proxy step"
+        },
+        "security": {
+          "label": "Security gate"
+        },
+        "database": {
+          "label": "Elasticsearch"
+        },
+        "messagebus": {
+          "label": "Handled in the proxy"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "deny",
+      "label": "Refusals",
+      "variant": "exception"
+    },
+    {
+      "id": "main",
+      "label": "Relay pipeline"
+    },
+    {
+      "id": "side",
+      "label": "Special paths"
+    }
+  ],
+  "mainPath": [
+    "caller",
+    "quota",
+    "classify",
+    "resolve",
+    "decide",
+    "forward"
+  ],
+  "nodes": [
+    {
+      "id": "caller",
+      "lane": "main",
+      "col": 0,
+      "type": "external",
+      "label": "Authenticated caller",
+      "sublabel": "user + groups (layer 2)"
+    },
+    {
+      "id": "quota",
+      "lane": "main",
+      "col": 1,
+      "type": "security",
+      "label": "Quotas",
+      "sublabel": "req/min · duration · bytes",
+      "explanation": "Per-role limits from the YAML. A caller in several roles gets the minimum of each limit. An oversized response is dropped whole, never truncated mid-JSON.",
+      "sources": [
+        {
+          "path": "internal/limits/enforce.go",
+          "label": "Enforce"
+        },
+        {
+          "path": "internal/limits/limits.go",
+          "label": "limits"
+        }
+      ]
+    },
+    {
+      "id": "classify",
+      "lane": "main",
+      "col": 2,
+      "type": "backend",
+      "label": "Route & classify",
+      "sublabel": "read · write · cluster_admin",
+      "explanation": "Proxy paths (/_proxy/*) are answered in place. For an ES API call, method + path give the action. Only read can ever be granted by a rule, so a write or cluster_admin request is always denied.",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "decideAndForward"
+        },
+        {
+          "path": "internal/acl/classify.go",
+          "label": "Classify"
+        }
+      ]
+    },
+    {
+      "id": "resolve",
+      "lane": "main",
+      "col": 3,
+      "type": "backend",
+      "label": "Resolve indices",
+      "sublabel": "aliases + wildcards",
+      "explanation": "Names from the path are resolved to concrete indices with GET /_resolve/index, so an alias can never stand in for an index a rule does not cover.",
+      "sources": [
+        {
+          "path": "internal/acl/resolve.go",
+          "label": "ESResolver"
+        }
+      ]
+    },
+    {
+      "id": "decide",
+      "lane": "main",
+      "col": 4,
+      "type": "security",
+      "label": "ACL decide",
+      "sublabel": "read-only, fail-closed",
+      "tag": "YAML rules",
+      "explanation": "Every concrete index must be covered by an allow rule (users or groups, glob patterns, optional IP / method / time conditions). System indices (.kibana*, .security*…) need an explicit rule. Teams add one read rule per team.",
+      "sources": [
+        {
+          "path": "internal/acl/decide.go",
+          "label": "Decide"
+        },
+        {
+          "path": "internal/acl/policy.go",
+          "label": "Policy"
+        },
+        {
+          "path": "internal/teams/teams.go",
+          "label": "team rules"
+        }
+      ]
+    },
+    {
+      "id": "forward",
+      "lane": "main",
+      "col": 5,
+      "type": "database",
+      "label": "Forward to ES",
+      "sublabel": "run_as the caller"
+    },
+    {
+      "id": "special",
+      "lane": "side",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Proxy routes",
+      "sublabel": "identity-token · ask",
+      "explanation": "POST /_proxy/identity-token signs a short RS256 JWT for the caller. POST /_proxy/ask runs the assistant, which applies the same ACL itself (layer 5).",
+      "sources": [
+        {
+          "path": "internal/idtoken/idtoken.go",
+          "label": "identity token"
+        },
+        {
+          "path": "internal/ask/ask.go",
+          "label": "Ask"
+        }
+      ]
+    },
+    {
+      "id": "esql",
+      "lane": "side",
+      "col": 3,
+      "type": "security",
+      "label": "ES|QL guard",
+      "sublabel": "FROM · LOOKUP JOIN · ENRICH",
+      "explanation": "POST /_query bodies are parsed. Every index the query reads, including ENRICH policy sources, must pass the ACL. An uncertain parse, a remote cluster or an unknown policy denies.",
+      "sources": [
+        {
+          "path": "internal/esql/allow.go",
+          "label": "Allow"
+        },
+        {
+          "path": "internal/esql/parse.go",
+          "label": "Parse"
+        }
+      ]
+    },
+    {
+      "id": "over",
+      "lane": "deny",
+      "col": 1,
+      "type": "security",
+      "label": "Over quota",
+      "sublabel": "429 · 504 · 413"
+    },
+    {
+      "id": "denied",
+      "lane": "deny",
+      "col": 4,
+      "type": "security",
+      "label": "Refused",
+      "sublabel": "403, names the index",
+      "tag": "audited"
+    }
+  ],
+  "edges": [
+    {
+      "id": "in",
+      "from": "caller",
+      "to": "quota",
+      "variant": "emphasis"
+    },
+    {
+      "id": "under",
+      "from": "quota",
+      "to": "classify",
+      "label": "under limit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "to-resolve",
+      "from": "classify",
+      "to": "resolve",
+      "variant": "emphasis"
+    },
+    {
+      "id": "to-decide",
+      "from": "resolve",
+      "to": "decide",
+      "variant": "emphasis"
+    },
+    {
+      "id": "allow",
+      "from": "decide",
+      "to": "forward",
+      "label": "allow",
+      "variant": "emphasis"
+    },
+    {
+      "id": "proxy-route",
+      "from": "classify",
+      "to": "special",
+      "label": "/_proxy/*",
+      "variant": "default",
+      "role": "branch"
+    },
+    {
+      "id": "esql-branch",
+      "from": "classify",
+      "to": "esql",
+      "label": "POST /_query",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "esql-ok",
+      "from": "esql",
+      "to": "forward",
+      "label": "all indices allowed",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "quota-deny",
+      "from": "quota",
+      "to": "over",
+      "label": "over",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "acl-deny",
+      "from": "decide",
+      "to": "denied",
+      "label": "deny",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Deny by default",
+      "items": [
+        "Only allow rules exist; anything not covered is refused",
+        "Invalid or ambiguous YAML: the proxy refuses to start",
+        "SIGHUP reloads the ACL; an invalid reload keeps the old one"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Exceptions on purpose",
+      "items": [
+        "kibana_system (passthrough) is relayed unchanged, outside the ACL",
+        "GET _security/_authenticate and _has_privileges answer for the caller only",
+        "Every decision is written to the audit log"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Admin tools",
+      "items": [
+        "proxy -simulate: which rule lets user X read index Y",
+        "configs/acl_cases.yaml: policy tests run by go test",
+        "proxy -sync / -dry-run: Kibana spaces and roles per team"
+      ]
+    }
+  ]
+}

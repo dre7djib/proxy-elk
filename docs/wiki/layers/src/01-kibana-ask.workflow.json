@@ -1,0 +1,285 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Layer 1 · Kibana & the Ask app",
+    "locale": "en",
+    "output": "docs/wiki/layers/01-kibana-ask.html",
+    "quality_profile": "showcase",
+    "parentHref": "index.html",
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    },
+    "legend": {
+      "entries": {
+        "frontend": {
+          "label": "Browser UI"
+        },
+        "backend": {
+          "label": "Server code"
+        },
+        "security": {
+          "label": "Security check"
+        },
+        "external": {
+          "label": "Person"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "browser",
+      "label": "Browser (Ask app)"
+    },
+    {
+      "id": "kibana",
+      "label": "Kibana server (plugin routes)"
+    },
+    {
+      "id": "proxy",
+      "label": "proxy-elk"
+    },
+    {
+      "id": "spike",
+      "label": "Spike: identity token",
+      "variant": "exception"
+    }
+  ],
+  "groups": [
+    {
+      "id": "spike-path",
+      "label": "Spike path, not the production Ask flow",
+      "lane": "spike",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "user",
+    "app",
+    "qroute",
+    "pask",
+    "answer",
+    "discover"
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "lane": "browser",
+      "col": 0,
+      "type": "external",
+      "label": "Dev / SRE",
+      "sublabel": "logged into Kibana"
+    },
+    {
+      "id": "app",
+      "lane": "browser",
+      "col": 1,
+      "type": "frontend",
+      "label": "Ask app",
+      "sublabel": "question + ES|QL box",
+      "explanation": "Ask sends the question (the model writes the query). Run sends the ES|QL box as is, so an edited query can be replayed without the model.",
+      "sources": [
+        {
+          "path": "spike/kibana-plugin/spike_ask/public/application.tsx",
+          "label": "Ask UI"
+        }
+      ]
+    },
+    {
+      "id": "qroute",
+      "lane": "kibana",
+      "col": 2,
+      "type": "backend",
+      "label": "/api/spike_ask/question",
+      "sublabel": "ES client asCurrentUser",
+      "explanation": "Relays the body to POST /_proxy/ask with the user's own Kibana credentials. The model key and the ES|QL run live in the proxy; nothing sensitive is held in Kibana.",
+      "sources": [
+        {
+          "path": "spike/kibana-plugin/spike_ask/server/routes/question.ts",
+          "label": "question route"
+        }
+      ]
+    },
+    {
+      "id": "pask",
+      "lane": "proxy",
+      "col": 2,
+      "type": "security",
+      "label": "POST /_proxy/ask",
+      "sublabel": "auth + quota, then Ask",
+      "tag": "layers 2, 3, 5",
+      "href": "05-ai-agent-mcp.html",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "Ask route in relay"
+        }
+      ]
+    },
+    {
+      "id": "answer",
+      "lane": "browser",
+      "col": 4,
+      "type": "frontend",
+      "label": "Answer",
+      "sublabel": "ES|QL + explanation + table",
+      "sources": [
+        {
+          "path": "internal/ask/ask.go",
+          "label": "response shape"
+        }
+      ]
+    },
+    {
+      "id": "discover",
+      "lane": "browser",
+      "col": 5,
+      "type": "frontend",
+      "label": "Open in Discover",
+      "sublabel": "locator: ES|QL + time range",
+      "sources": [
+        {
+          "path": "spike/kibana-plugin/spike_ask/public/application.tsx",
+          "label": "Discover locator"
+        }
+      ]
+    },
+    {
+      "id": "troute",
+      "lane": "kibana",
+      "col": 3,
+      "type": "backend",
+      "label": "/api/spike_ask/ask",
+      "sublabel": "asCurrentUser",
+      "sources": [
+        {
+          "path": "spike/kibana-plugin/spike_ask/server/routes/ask.ts",
+          "label": "token route"
+        }
+      ]
+    },
+    {
+      "id": "ptoken",
+      "lane": "spike",
+      "col": 4,
+      "type": "security",
+      "label": "/_proxy/identity-token",
+      "sublabel": "RS256 JWT, 5–15 min",
+      "sources": [
+        {
+          "path": "internal/idtoken/idtoken.go",
+          "label": "Issuer"
+        }
+      ]
+    },
+    {
+      "id": "engine",
+      "lane": "spike",
+      "col": 5,
+      "type": "backend",
+      "label": "Engine /whoami",
+      "sublabel": "verifies with JWKS",
+      "sources": [
+        {
+          "path": "spike/engine/main.go",
+          "label": "spike engine"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "ask",
+      "from": "user",
+      "to": "app",
+      "label": "ask",
+      "variant": "default"
+    },
+    {
+      "id": "post-question",
+      "from": "app",
+      "to": "qroute",
+      "label": "{question} or {esql}",
+      "variant": "emphasis"
+    },
+    {
+      "id": "relay-ask",
+      "from": "qroute",
+      "to": "pask",
+      "label": "as user",
+      "variant": "security"
+    },
+    {
+      "id": "reply",
+      "from": "pask",
+      "to": "answer",
+      "label": "JSON",
+      "variant": "emphasis",
+      "role": "return"
+    },
+    {
+      "id": "open-discover",
+      "from": "answer",
+      "to": "discover",
+      "variant": "default"
+    },
+    {
+      "id": "token-request",
+      "from": "app",
+      "to": "troute",
+      "label": "spike button",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "mint",
+      "from": "troute",
+      "to": "ptoken",
+      "label": "mint",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "relay-token",
+      "from": "ptoken",
+      "to": "engine",
+      "label": "Bearer, unmodified",
+      "variant": "security",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "What runs today",
+      "items": [
+        "Single-turn Ask: one question, one ES|QL query, one table",
+        "The query is shown, editable and replayable with Run",
+        "Open in Discover pre-fills the query and time range"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Spike path",
+      "items": [
+        "Validates how the engine learns who is calling",
+        "The plugin relays the proxy's token verbatim and holds no signing key",
+        "Service accounts (kibana_system) get no identity token"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Planned (J2 → J3)",
+      "items": [
+        "Chat-style Ask: conversation sidebar, streaming, Stop button",
+        "Tool calls shown as collapsible blocks with hook decisions",
+        "Conversations stored in a hidden Elasticsearch index"
+      ]
+    }
+  ]
+}

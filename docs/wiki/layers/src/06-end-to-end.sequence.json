@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "End to end: allowed question, refused query, audit",
+    "locale": "en",
+    "output": "docs/wiki/layers/06-end-to-end.html",
+    "quality_profile": "showcase",
+    "parentHref": "index.html",
+    "legend": {
+      "entries": {
+        "dashed": {
+          "label": "audit line"
+        }
+      }
+    },
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    }
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Dev / SRE",
+      "sublabel": "team A"
+    },
+    {
+      "id": "kibana",
+      "type": "frontend",
+      "label": "Kibana",
+      "sublabel": "Ask · Discover",
+      "href": "01-kibana-ask.html"
+    },
+    {
+      "id": "proxy",
+      "type": "security",
+      "label": "proxy relay",
+      "sublabel": "auth · quotas · ACL",
+      "href": "03-authorization.html",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "relay"
+        }
+      ]
+    },
+    {
+      "id": "ask",
+      "type": "backend",
+      "label": "Ask handler",
+      "sublabel": "/_proxy/ask",
+      "href": "05-ai-agent-mcp.html",
+      "sources": [
+        {
+          "path": "internal/ask/ask.go",
+          "label": "Ask"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LLM provider",
+      "sublabel": "chat-completions"
+    },
+    {
+      "id": "es",
+      "type": "database",
+      "label": "Elasticsearch",
+      "sublabel": "run_as",
+      "href": "04-elasticsearch.html"
+    },
+    {
+      "id": "audit",
+      "type": "messagebus",
+      "label": "Audit log",
+      "sublabel": "JSON on stdout",
+      "sources": [
+        {
+          "path": "internal/audit/audit.go",
+          "label": "audit"
+        }
+      ]
+    }
+  ],
+  "segments": [
+    {
+      "from": 140,
+      "to": 240,
+      "label": "1 · Sign in"
+    },
+    {
+      "from": 250,
+      "to": 522,
+      "label": "2 · Ask about an allowed index"
+    },
+    {
+      "from": 530,
+      "to": 690,
+      "label": "3 · Query another team's index"
+    }
+  ],
+  "messages": [
+    {
+      "id": "login",
+      "from": "user",
+      "to": "proxy",
+      "y": 160,
+      "label": "/auth/kibana (LDAP or OIDC)",
+      "variant": "emphasis",
+      "note": "groups decide the readable indices (layer 2)"
+    },
+    {
+      "id": "session",
+      "from": "proxy",
+      "to": "user",
+      "y": 228,
+      "label": "sessions + redirect",
+      "variant": "return"
+    },
+    {
+      "id": "question",
+      "from": "user",
+      "to": "kibana",
+      "y": 262,
+      "label": "question on equipe-a-*",
+      "variant": "emphasis"
+    },
+    {
+      "id": "post",
+      "from": "kibana",
+      "to": "proxy",
+      "y": 290,
+      "label": "/_proxy/ask as user",
+      "variant": "emphasis"
+    },
+    {
+      "id": "pass",
+      "from": "proxy",
+      "to": "ask",
+      "y": 318,
+      "label": "caller identity",
+      "variant": "default"
+    },
+    {
+      "id": "prompt",
+      "from": "ask",
+      "to": "llm",
+      "y": 346,
+      "label": "readable schema",
+      "variant": "default"
+    },
+    {
+      "id": "esql",
+      "from": "llm",
+      "to": "ask",
+      "y": 374,
+      "label": "ES|QL",
+      "variant": "return"
+    },
+    {
+      "id": "run",
+      "from": "ask",
+      "to": "es",
+      "y": 404,
+      "label": "_query as caller",
+      "variant": "security",
+      "note": "ES|QL guard passed first"
+    },
+    {
+      "id": "rows",
+      "from": "es",
+      "to": "ask",
+      "y": 450,
+      "label": "rows",
+      "variant": "return"
+    },
+    {
+      "id": "answer",
+      "from": "ask",
+      "to": "kibana",
+      "y": 478,
+      "label": "query + table",
+      "variant": "return"
+    },
+    {
+      "id": "audit-ok",
+      "from": "proxy",
+      "to": "audit",
+      "y": 508,
+      "label": "allowed",
+      "variant": "dashed"
+    },
+    {
+      "id": "discover",
+      "from": "user",
+      "to": "kibana",
+      "y": 545,
+      "label": "Discover: FROM equipe-b-*",
+      "variant": "emphasis"
+    },
+    {
+      "id": "query",
+      "from": "kibana",
+      "to": "proxy",
+      "y": 573,
+      "label": "POST /_query as user",
+      "variant": "emphasis",
+      "note": "equipe-b-* not covered by any rule"
+    },
+    {
+      "id": "audit-deny",
+      "from": "proxy",
+      "to": "audit",
+      "y": 620,
+      "label": "denied: access denied",
+      "variant": "dashed"
+    },
+    {
+      "id": "refused",
+      "from": "proxy",
+      "to": "kibana",
+      "y": 648,
+      "label": "403, names the index",
+      "variant": "return"
+    },
+    {
+      "id": "shown",
+      "from": "kibana",
+      "to": "user",
+      "y": 676,
+      "label": "clear refusal",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "proxy",
+      "from": 160,
+      "to": 228
+    },
+    {
+      "participant": "ask",
+      "from": 318,
+      "to": 478
+    },
+    {
+      "participant": "proxy",
+      "from": 573,
+      "to": 648
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Acceptance checks covered here",
+      "items": [
+        "Login, then a question on an authorized index returns query + table",
+        "A query on another team's index is refused with a clear message",
+        "Both requests appear in the audit log"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Audit today",
+      "items": [
+        "One line per request: source, user, path, status, decision, duration, bytes",
+        "Decision comes from the HTTP status (≥ 400 = denied)",
+        "User is filled from the session cookie or a Bearer JWT"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Still to come",
+      "items": [
+        "Question and generated query in the audit line",
+        "Conversations kept across sessions, re-run with current rights",
+        "Same scenario through an MCP client (J3)"
+      ]
+    }
+  ]
+}

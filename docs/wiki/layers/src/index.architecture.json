@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "proxy-elk: how it works, layer by layer",
+    "locale": "en",
+    "output": "docs/wiki/layers/index.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/dre7djib/proxy-elk.git",
+      "provider": "github",
+      "revision": "8ebe8427eed50042965559c2c152faeff215ceb5"
+    }
+  },
+  "layout": {
+    "mode": "auto"
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Dev / SRE",
+      "sublabel": "browser",
+      "href": "06-end-to-end.html",
+      "tag": "end-to-end"
+    },
+    {
+      "id": "kibana",
+      "type": "frontend",
+      "label": "Kibana 8.19",
+      "sublabel": "Ask plugin (spike)",
+      "tag": "Layer 1",
+      "explanation": "Kibana talks to Elasticsearch only through the proxy. The Ask plugin relays questions to POST /_proxy/ask with the current user's credentials (asCurrentUser).",
+      "href": "01-kibana-ask.html",
+      "sources": [
+        {
+          "path": "spike/kibana-plugin/spike_ask/server/routes/question.ts",
+          "label": "Ask route"
+        },
+        {
+          "path": "spike/kibana-plugin/spike_ask/public/application.tsx",
+          "label": "Ask UI"
+        }
+      ]
+    },
+    {
+      "id": "authn",
+      "type": "security",
+      "label": "Authentication",
+      "sublabel": "OIDC · LDAP/AD · Kerberos · JWT",
+      "tag": "Layer 2",
+      "explanation": "Every login method produces the same identity: a subject and its groups. Human logins get an HMAC-signed session cookie; machines send a Bearer JWT from an external IdP.",
+      "href": "02-authentication.html",
+      "sources": [
+        {
+          "path": "internal/auth/identity.go",
+          "label": "Identity"
+        },
+        {
+          "path": "internal/es/relay.go",
+          "label": "relay auth order"
+        },
+        {
+          "path": "cmd/proxy/main.go",
+          "label": "login routes"
+        }
+      ]
+    },
+    {
+      "id": "authz",
+      "type": "security",
+      "label": "Authorization",
+      "sublabel": "quotas · YAML ACL · ES|QL guard",
+      "tag": "Layer 3",
+      "explanation": "Deny by default. Quotas first, then the request is classified (read, write, cluster_admin), indices and aliases are resolved, and the read-only ACL decides. ES|QL queries are parsed to check every index they read.",
+      "href": "03-authorization.html",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "decideAndForward"
+        },
+        {
+          "path": "internal/acl/decide.go",
+          "label": "Decide"
+        },
+        {
+          "path": "internal/esql/allow.go",
+          "label": "ES|QL guard"
+        }
+      ]
+    },
+    {
+      "id": "ask",
+      "type": "backend",
+      "label": "Ask assistant",
+      "sublabel": "POST /_proxy/ask",
+      "tag": "Layer 5",
+      "explanation": "Turns a question into one read-only ES|QL query, using only the schema of indices the caller may read, runs it as the caller and allows one correction.",
+      "href": "05-ai-agent-mcp.html",
+      "sources": [
+        {
+          "path": "internal/ask/ask.go",
+          "label": "Ask handler"
+        }
+      ]
+    },
+    {
+      "id": "audit",
+      "type": "backend",
+      "label": "Audit",
+      "sublabel": "one JSON line per request",
+      "explanation": "Middleware wrapping the whole mux: source, user, decision and reason on stdout. Bodies, cookies and Authorization headers are never logged; secrets are masked.",
+      "sources": [
+        {
+          "path": "internal/audit/audit.go",
+          "label": "audit logger"
+        }
+      ]
+    },
+    {
+      "id": "es",
+      "type": "database",
+      "label": "Elasticsearch 8.19",
+      "sublabel": "reached only via the proxy",
+      "tag": "Layer 4",
+      "href": "04-elasticsearch.html",
+      "sources": [
+        {
+          "path": "internal/es/relay.go",
+          "label": "run_as forward"
+        }
+      ]
+    },
+    {
+      "id": "idp",
+      "type": "external",
+      "label": "OIDC provider",
+      "sublabel": "Keycloak, Entra…"
+    },
+    {
+      "id": "ldap",
+      "type": "external",
+      "label": "LDAP / AD",
+      "sublabel": "LDAPS or StartTLS"
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LLM provider",
+      "sublabel": "chat-completions API"
+    },
+    {
+      "id": "sync",
+      "type": "backend",
+      "label": "Team sync",
+      "sublabel": "proxy -sync",
+      "explanation": "Reads the YAML teams and creates one Kibana space per team and one role per level (viewer, editor, admin) through Kibana's API. Idempotent; -dry-run only plans.",
+      "sources": [
+        {
+          "path": "internal/sync/sync.go",
+          "label": "Syncer"
+        },
+        {
+          "path": "internal/teams/teams.go",
+          "label": "teams"
+        }
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "external",
+      "label": "AI client (MCP)",
+      "sublabel": "Claude, IDE",
+      "tag": "planned · J3"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "proxy-elk (single Go binary)",
+      "wraps": [
+        "authn",
+        "authz",
+        "ask",
+        "audit"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-kibana",
+      "from": "user",
+      "to": "kibana",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "kibana-authn",
+      "from": "kibana",
+      "to": "authn",
+      "label": "every ES call",
+      "variant": "emphasis"
+    },
+    {
+      "id": "authn-idp",
+      "from": "authn",
+      "to": "idp",
+      "label": "OIDC code flow",
+      "variant": "security"
+    },
+    {
+      "id": "authn-ldap",
+      "from": "authn",
+      "to": "ldap",
+      "label": "bind + groups",
+      "variant": "security"
+    },
+    {
+      "id": "authn-authz",
+      "from": "authn",
+      "to": "authz",
+      "label": "user + groups",
+      "variant": "emphasis"
+    },
+    {
+      "id": "authz-es",
+      "from": "authz",
+      "to": "es",
+      "label": "run_as user",
+      "variant": "emphasis"
+    },
+    {
+      "id": "authz-ask",
+      "from": "authz",
+      "to": "ask",
+      "label": "/_proxy/ask"
+    },
+    {
+      "id": "ask-llm",
+      "from": "ask",
+      "to": "llm",
+      "label": "schema + question"
+    },
+    {
+      "id": "ask-es",
+      "from": "ask",
+      "to": "es",
+      "label": "ES|QL as user"
+    },
+    {
+      "id": "authz-audit",
+      "from": "authz",
+      "to": "audit",
+      "label": "decision",
+      "variant": "dashed"
+    },
+    {
+      "id": "sync-kibana",
+      "from": "sync",
+      "to": "kibana",
+      "label": "spaces + roles",
+      "variant": "dashed"
+    },
+    {
+      "id": "mcp-authn",
+      "from": "mcp",
+      "to": "authn",
+      "label": "MCP (planned)",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Read the layers",
+      "items": [
+        "1 · Kibana & Ask UI → 01-kibana-ask.html",
+        "2 · Authentication → 02-authentication.html",
+        "3 · Authorization → 03-authorization.html",
+        "4 · Elasticsearch → 04-elasticsearch.html",
+        "5 · AI assistant → 05-ai-agent-mcp.html",
+        "End-to-end scenario → 06-end-to-end.html"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Principles",
+      "items": [
+        "Deny by default: unknown routes and actions are refused",
+        "The AI never has more rights than the logged-in user",
+        "Everything the AI generates is read-only",
+        "Generated queries are always visible and replayable"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Milestones",
+      "items": [
+        "J1 secure proxy: done",
+        "J2 assistant in Kibana: mostly done (Ask is single-turn, plugin still a spike)",
+        "J3 MCP server and log analysis: planned"
+      ]
+    }
+  ]
+}
