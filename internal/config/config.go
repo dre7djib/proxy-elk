@@ -179,6 +179,8 @@ type Model struct {
 	URL    string `yaml:"url" json:"url"`
 	APIKey string `yaml:"api_key" json:"api_key"`
 	Name   string `yaml:"name" json:"name"`
+	// ReasoningEffort is sent as-is when set (OpenAI reasoning models need "none" for tools).
+	ReasoningEffort string `yaml:"reasoning_effort" json:"reasoning_effort"`
 }
 
 // Session configures the HMAC-signed login session shared by OIDC and

@@ -469,7 +469,7 @@ func buildMux(cfg *config.Config, policy func() *acl.Policy) (http.Handler, erro
 		Ask: &ask.Handler{
 			Target: target, Policy: policy, Resolver: resolver, Enrich: enrich,
 			RunAsUser: cfg.Elasticsearch.RunAsUser, RunAsPassword: cfg.Elasticsearch.RunAsPassword,
-			ModelURL: cfg.Model.URL, ModelKey: cfg.Model.APIKey, ModelName: cfg.Model.Name,
+			ModelURL: cfg.Model.URL, ModelKey: cfg.Model.APIKey, ModelName: cfg.Model.Name, ModelReasoningEffort: cfg.Model.ReasoningEffort,
 			Audit: accessLog,
 		},
 		IdentityTokens: idIssuer,

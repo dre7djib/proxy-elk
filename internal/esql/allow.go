@@ -3,6 +3,7 @@ package esql
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"proxy/internal/acl"
 	"proxy/internal/auth"
@@ -47,6 +48,8 @@ func Allow(ctx context.Context, query string, id auth.Identity, dc acl.DecideCon
 	}
 	resolved, err := resolver.Resolve(ctx, indices)
 	if err != nil {
+		// The cause stays server-side: the caller (and the model) only see the generic text.
+		log.Printf("esql: index resolution failed for %q: %v", indices, err)
 		return fmt.Errorf("access denied: index resolution failed")
 	}
 	if len(resolved) == 0 {

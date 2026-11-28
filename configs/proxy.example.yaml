@@ -190,3 +190,4 @@ session:
 #   url: https://api.openai.com/v1/chat/completions
 #   api_key: "${env:MODEL_API_KEY}"
 #   name: gpt-4o-mini
+#   reasoning_effort: none   # optional; OpenAI reasoning models need "none" to use tools

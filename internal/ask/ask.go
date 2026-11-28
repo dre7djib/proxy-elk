@@ -63,10 +63,12 @@ type Handler struct {
 	Audit *audit.Logger
 
 	// ModelURL is the full chat-completions URL; empty answers 503.
-	ModelURL   string
-	ModelKey   string
-	ModelName  string
-	HTTPClient *http.Client
+	ModelURL  string
+	ModelKey  string
+	ModelName string
+	// ModelReasoningEffort is sent as reasoning_effort when non-empty.
+	ModelReasoningEffort string
+	HTTPClient           *http.Client
 }
 
 // History bounds: earlier turns only, no tool results (J2-14 forbids storing them).
@@ -555,12 +557,16 @@ func flatten(prefix string, props map[string]json.RawMessage, out map[string]str
 // delta as it arrives; tool-call fragments are accumulated, never forwarded.
 // A message with no tool call is the answer.
 func (h *Handler) complete(ctx context.Context, msgs []chatMessage, onToken func(string)) (chatMessage, error) {
-	payload, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"model":    h.ModelName,
 		"messages": msgs,
 		"tools":    agentTools,
 		"stream":   true,
-	})
+	}
+	if h.ModelReasoningEffort != "" {
+		body["reasoning_effort"] = h.ModelReasoningEffort
+	}
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return chatMessage{}, err
 	}
