@@ -4,6 +4,7 @@
 package ask
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -68,8 +69,69 @@ type Handler struct {
 	HTTPClient *http.Client
 }
 
+// History bounds: earlier turns only, no tool results (J2-14 forbids storing them).
+const (
+	maxHistory      = 16
+	maxHistoryBytes = 8 << 10
+)
+
+type historyMsg struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type request struct {
-	Question string `json:"question"`
+	Question string       `json:"question"`
+	History  []historyMsg `json:"history"`
+}
+
+// sink writes either one JSON object or SSE events, depending on Accept.
+type sink struct {
+	w   http.ResponseWriter
+	rc  *http.ResponseController
+	sse bool
+}
+
+// start commits SSE headers; a no-op in JSON mode.
+func (s *sink) start() {
+	if !s.sse {
+		return
+	}
+	h := s.w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	s.w.WriteHeader(http.StatusOK)
+	s.rc.Flush()
+}
+
+func (s *sink) event(name string, v any) {
+	b, _ := json.Marshal(v)
+	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", name, b)
+	s.rc.Flush()
+}
+
+// fail reports an error: an HTTP status in JSON mode, an error event once the stream is open.
+func (s *sink) fail(code int, msg string) {
+	if s.sse {
+		s.event("error", map[string]string{"error": msg})
+		return
+	}
+	writeJSON(s.w, code, response{Error: msg})
+}
+
+func (s *sink) done(out response) {
+	if s.sse {
+		s.event("done", out)
+		return
+	}
+	writeJSON(s.w, http.StatusOK, out)
+}
+
+func (s *sink) token(text string) {
+	if s.sse && text != "" {
+		s.event("token", map[string]string{"text": text})
+	}
 }
 
 type step struct {
@@ -134,6 +196,7 @@ var agentTools = []map[string]any{
 }
 
 // Serve is called with an already authenticated, quota-checked caller.
+// With Accept: text/event-stream the answer streams as SSE; otherwise one JSON object.
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity) {
 	w.Header().Set("X-elastic-product", "Elasticsearch")
 	if h == nil || h.ModelURL == "" {
@@ -141,7 +204,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 		return
 	}
 	var req request
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<18)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, response{Error: "invalid body"})
 		return
 	}
@@ -150,6 +213,13 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 		writeJSON(w, http.StatusBadRequest, response{Error: "question required"})
 		return
 	}
+	if msg := checkHistory(req.History); msg != "" {
+		writeJSON(w, http.StatusBadRequest, response{Error: msg})
+		return
+	}
+
+	out := &sink{w: w, rc: http.NewResponseController(w), sse: strings.Contains(r.Header.Get("Accept"), "text/event-stream")}
+	out.start()
 
 	ctx, cancel := context.WithTimeout(r.Context(), loopTimeout)
 	defer cancel()
@@ -157,36 +227,56 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 
 	schema, err := h.schema(ctx, id, dc)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, response{Error: "schema lookup failed"})
+		out.fail(http.StatusBadGateway, "schema lookup failed")
 		return
 	}
 	if schema == "" {
-		writeJSON(w, http.StatusOK, response{Error: "no index you may read"})
+		out.done(response{Error: "no index you may read"})
 		return
 	}
 
 	msgs := []chatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: "Schema (index: field type):\n" + schema},
-		{Role: "user", Content: "Question: " + req.Question},
 	}
+	for _, m := range req.History {
+		msgs = append(msgs, chatMessage{Role: m.Role, Content: m.Content})
+	}
+	msgs = append(msgs, chatMessage{Role: "user", Content: "Question: " + req.Question})
+
 	var steps []step
 	var lastDenial string
 	for turn := 0; turn < maxTurns; turn++ {
-		msg, err := h.complete(ctx, msgs)
+		// Client gone (Stop) or deadline: no further model call, no tool run.
+		if ctx.Err() != nil {
+			return
+		}
+		msg, err := h.complete(ctx, msgs, out.token)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, response{Error: "model call failed"})
+			if ctx.Err() == nil {
+				out.fail(http.StatusBadGateway, "model call failed")
+			}
 			return
 		}
 		if len(msg.ToolCalls) == 0 {
-			finish(w, strings.TrimSpace(msg.Content), steps, lastDenial, false)
+			finish(out, strings.TrimSpace(msg.Content), steps, lastDenial, false)
 			return
 		}
 		msgs = append(msgs, msg)
 		for _, tc := range msg.ToolCalls {
+			if ctx.Err() != nil {
+				return
+			}
 			body, st, denial := h.execTool(ctx, id, dc, tc)
 			if st != nil {
 				steps = append(steps, *st)
+				if out.sse {
+					out.event("step", map[string]string{"esql": st.ESQL})
+				}
+			} else if out.sse && tc.Function.Name == "get_schema" && denial == "" {
+				if ix, err := stringArg(tc.Function.Arguments, "index"); err == nil {
+					out.event("step", map[string]string{"index": ix})
+				}
 			}
 			if denial != "" {
 				lastDenial = denial
@@ -198,12 +288,28 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, id auth.Identity
 			})
 		}
 	}
-	finish(w, "", steps, lastDenial, true)
+	finish(out, "", steps, lastDenial, true)
+}
+
+// checkHistory returns an error text, or "" when history is acceptable.
+func checkHistory(h []historyMsg) string {
+	if len(h) > maxHistory {
+		return "history too long"
+	}
+	for _, m := range h {
+		if m.Role != "user" && m.Role != "assistant" {
+			return "invalid history role"
+		}
+		if len(m.Content) > maxHistoryBytes {
+			return "history message too large"
+		}
+	}
+	return ""
 }
 
 // finish writes the answer. A denial with no successful query replaces the
 // error so the caller sees the hook text, not a model invention.
-func finish(w http.ResponseWriter, answer string, steps []step, lastDenial string, capped bool) {
+func finish(s *sink, answer string, steps []step, lastDenial string, capped bool) {
 	out := response{Answer: answer, Steps: steps}
 	if capped {
 		out.Error = "stopped after 6 turns"
@@ -214,7 +320,7 @@ func finish(w http.ResponseWriter, answer string, steps []step, lastDenial strin
 	if out.Answer == "" && out.Error == "" {
 		out.Error = "empty model reply"
 	}
-	writeJSON(w, http.StatusOK, out)
+	s.done(out)
 }
 
 // execTool runs one tool call. Unknown names never reach Elasticsearch.
@@ -445,12 +551,15 @@ func flatten(prefix string, props map[string]json.RawMessage, out map[string]str
 	}
 }
 
-// complete runs one chat completion. A message with no tool call is the answer.
-func (h *Handler) complete(ctx context.Context, msgs []chatMessage) (chatMessage, error) {
+// complete runs one streaming chat completion. onToken receives each content
+// delta as it arrives; tool-call fragments are accumulated, never forwarded.
+// A message with no tool call is the answer.
+func (h *Handler) complete(ctx context.Context, msgs []chatMessage, onToken func(string)) (chatMessage, error) {
 	payload, err := json.Marshal(map[string]any{
 		"model":    h.ModelName,
 		"messages": msgs,
 		"tools":    agentTools,
+		"stream":   true,
 	})
 	if err != nil {
 		return chatMessage{}, err
@@ -469,15 +578,69 @@ func (h *Handler) complete(ctx context.Context, msgs []chatMessage) (chatMessage
 	if resp.StatusCode != http.StatusOK {
 		return chatMessage{}, fmt.Errorf("model status %d", resp.StatusCode)
 	}
-	var cr struct {
-		Choices []struct {
-			Message chatMessage `json:"message"`
-		} `json:"choices"`
+
+	var content strings.Builder
+	calls := map[int]*toolCall{}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	for sc.Scan() {
+		data, ok := strings.CutPrefix(sc.Text(), "data:")
+		if !ok {
+			continue
+		}
+		data = strings.TrimSpace(data)
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+		d := chunk.Choices[0].Delta
+		if d.Content != "" {
+			content.WriteString(d.Content)
+			onToken(d.Content)
+		}
+		for _, f := range d.ToolCalls {
+			tc := calls[f.Index]
+			if tc == nil {
+				tc = &toolCall{Type: "function"}
+				calls[f.Index] = tc
+			}
+			if f.ID != "" {
+				tc.ID = f.ID
+			}
+			tc.Function.Name += f.Function.Name
+			tc.Function.Arguments += f.Function.Arguments
+		}
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&cr); err != nil || len(cr.Choices) == 0 {
-		return chatMessage{}, errors.New("bad model response")
+	if err := sc.Err(); err != nil {
+		return chatMessage{}, err
 	}
-	return cr.Choices[0].Message, nil
+	msg := chatMessage{Role: "assistant", Content: content.String()}
+	idx := make([]int, 0, len(calls))
+	for i := range calls {
+		idx = append(idx, i)
+	}
+	sort.Ints(idx)
+	for _, i := range idx {
+		msg.ToolCalls = append(msg.ToolCalls, *calls[i])
+	}
+	return msg, nil
 }
 
 // run POSTs an already-allowed query to /_query as the caller.

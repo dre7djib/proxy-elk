@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"strings"
 
 	"proxy/internal/auth"
 )
@@ -30,6 +31,13 @@ func Enforce(l *Limits, counter *Counter, id *auth.Identity, next http.Handler) 
 
 		ctx, cancel := context.WithTimeout(r.Context(), quota.MaxDuration)
 		defer cancel()
+
+		// A stream cannot be buffered: quota and deadline still apply, the
+		// size cap does not. shortcut: no byte cap on SSE, add a counting writer if needed.
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 
 		buf := newBufferedResponse(quota.MaxResultBytes)
 		done := make(chan struct{})
