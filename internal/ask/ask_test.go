@@ -80,7 +80,7 @@ func newFakes(t *testing.T, messages ...string) *fakes {
 			http.Error(w, "no more replies", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(`{"choices":[{"message":` + messages[i] + `}]}`))
+		writeSSE(w, messages[i])
 	}))
 	t.Cleanup(model.Close)
 
@@ -97,6 +97,39 @@ func newFakes(t *testing.T, messages ...string) *fakes {
 		ModelURL: model.URL, ModelKey: "k", ModelName: "m",
 	}
 	return f
+}
+
+// writeSSE streams one model reply. A "deltas:" entry is a JSON array of
+// content fragments; any other entry is one assistant message (tool_calls get an index).
+func writeSSE(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	send := func(delta any) {
+		b, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": delta}}})
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		w.(http.Flusher).Flush()
+	}
+	if parts, ok := strings.CutPrefix(msg, "deltas:"); ok {
+		var ds []string
+		json.Unmarshal([]byte(parts), &ds)
+		for _, d := range ds {
+			send(map[string]string{"content": d})
+		}
+	} else {
+		var m map[string]any
+		json.Unmarshal([]byte(msg), &m)
+		if tcs, ok := m["tool_calls"].([]any); ok {
+			for i, tc := range tcs {
+				tc.(map[string]any)["index"] = i
+			}
+		}
+		send(m)
+	}
+	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
+func deltas(parts ...string) string {
+	b, _ := json.Marshal(parts)
+	return "deltas:" + string(b)
 }
 
 func (f *fakes) valuesJSON() string {
@@ -405,5 +438,150 @@ func TestAfterRunNeverWidens(t *testing.T) {
 	}
 	if len(out) > len(rows) {
 		t.Fatal("afterRun added rows")
+	}
+}
+
+// sseEvent is one parsed "event:/data:" pair.
+type sseEvent struct{ Name, Data string }
+
+func parseSSE(body string) []sseEvent {
+	var evs []sseEvent
+	for _, blk := range strings.Split(strings.TrimSpace(body), "\n\n") {
+		var e sseEvent
+		for _, line := range strings.Split(blk, "\n") {
+			if v, ok := strings.CutPrefix(line, "event: "); ok {
+				e.Name = v
+			} else if v, ok := strings.CutPrefix(line, "data: "); ok {
+				e.Data = v
+			}
+		}
+		evs = append(evs, e)
+	}
+	return evs
+}
+
+// flushRecorder records the body length at each Flush.
+type flushRecorder struct {
+	*httptest.ResponseRecorder
+	flushedAt []int
+}
+
+func (f *flushRecorder) Flush() {
+	f.flushedAt = append(f.flushedAt, f.Body.Len())
+	f.ResponseRecorder.Flush()
+}
+
+func (f *fakes) postSSE(body string) *flushRecorder {
+	w := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(body))
+	r.Header.Set("Accept", "text/event-stream")
+	f.h.Serve(w, r, auth.Identity{Subject: "alice", Groups: []string{"equipe-a-viewer"}})
+	return w
+}
+
+func TestSSETokensThenDone(t *testing.T) {
+	f := newFakes(t, deltas("Hel", "lo"))
+	w := f.postSSE(`{"question":"hi"}`)
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("content-type %q", ct)
+	}
+	evs := parseSSE(w.Body.String())
+	if len(evs) != 3 || evs[0].Name != "token" || evs[1].Name != "token" || evs[2].Name != "done" {
+		t.Fatalf("events %+v", evs)
+	}
+	if evs[0].Data != `{"text":"Hel"}` || evs[1].Data != `{"text":"lo"}` || !strings.Contains(evs[2].Data, `"answer":"Hello"`) {
+		t.Fatalf("events %+v", evs)
+	}
+	// every event is flushed on its own, so the first token leaves before the handler ends.
+	first := len("event: token\ndata: {\"text\":\"Hel\"}\n\n")
+	found := false
+	for _, n := range w.flushedAt {
+		if n == first {
+			found = true
+		}
+	}
+	if !found || len(w.flushedAt) < 4 {
+		t.Fatalf("flushes %v, want one right after the first token (%d)", w.flushedAt, first)
+	}
+}
+
+func TestSSEStepEvent(t *testing.T) {
+	f := newFakes(t,
+		toolCallMsg("1", "run_esql", map[string]string{"query": "FROM equipe-a-sample | LIMIT 1"}),
+		toolCallMsg("2", "get_schema", map[string]string{"index": "equipe-a-sample"}),
+		answer("ok"),
+	)
+	evs := parseSSE(f.postSSE(`{"question":"q"}`).Body.String())
+	var steps []string
+	for _, e := range evs {
+		if e.Name == "step" {
+			steps = append(steps, e.Data)
+		}
+	}
+	if len(steps) != 2 || !strings.Contains(steps[0], `"esql"`) || steps[1] != `{"index":"equipe-a-sample"}` {
+		t.Fatalf("steps %v", steps)
+	}
+}
+
+func TestCancelAfterFirstToolStopsLoop(t *testing.T) {
+	f := newFakes(t,
+		toolCallMsg("1", "run_esql", map[string]string{"query": "FROM equipe-a-sample"}),
+		answer("never"),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// ES answers /_query, then the client goes away (Stop).
+	inner := f.h.Target
+	es := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_query" {
+			cancel()
+			w.Write([]byte(`{"columns":[],"values":[]}`))
+			return
+		}
+		http.Redirect(w, r, inner.String()+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer es.Close()
+	f.h.Target, _ = url.Parse(es.URL)
+	// GET /_mapping is redirected back to the original ES.
+	w := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(`{"question":"q"}`)).WithContext(ctx)
+	r.Header.Set("Accept", "text/event-stream")
+	f.h.Serve(w, r, auth.Identity{Subject: "alice", Groups: []string{"equipe-a-viewer"}})
+	if f.modelCalls.Load() != 1 {
+		t.Fatalf("model called %d times after Stop", f.modelCalls.Load())
+	}
+	if strings.Contains(w.Body.String(), "event: done") || strings.Contains(w.Body.String(), "never") {
+		t.Fatalf("wrote after Stop: %s", w.Body.String())
+	}
+}
+
+func TestHistoryBeforeQuestion(t *testing.T) {
+	f := newFakes(t, answer("ok"))
+	code, out := f.post(`{"question":"and now?","history":[{"role":"user","content":"first q"},{"role":"assistant","content":"first a"}]}`)
+	if code != 200 || out.Error != "" {
+		t.Fatalf("code %d out %+v", code, out)
+	}
+	b := f.modelBody[0]
+	i, j, k := strings.Index(b, "first q"), strings.Index(b, "first a"), strings.Index(b, "Question: and now?")
+	if i < 0 || !(i < j && j < k) || strings.Index(b, "Schema (index") > i {
+		t.Fatalf("order wrong in %s", b)
+	}
+}
+
+func TestHistoryRejected(t *testing.T) {
+	f := newFakes(t)
+	many := strings.Repeat(`{"role":"user","content":"x"},`, maxHistory) + `{"role":"user","content":"x"}`
+	big := strings.Repeat("a", maxHistoryBytes+1)
+	for name, body := range map[string]string{
+		"role":  `{"question":"q","history":[{"role":"tool","content":"x"}]}`,
+		"count": `{"question":"q","history":[` + many + `]}`,
+		"size":  `{"question":"q","history":[{"role":"user","content":"` + big + `"}]}`,
+	} {
+		if code, out := f.post(body); code != 400 || out.Error == "" {
+			t.Fatalf("%s: code %d out %+v", name, code, out)
+		}
+	}
+	if f.modelCalls.Load() != 0 {
+		t.Fatal("model must not be called")
 	}
 }
